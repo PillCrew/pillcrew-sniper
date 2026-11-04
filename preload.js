@@ -1,0 +1,37 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+const call = (ch) => (...a) => ipcRenderer.invoke(ch, ...a);
+
+contextBridge.exposeInMainWorld('api', {
+  walletStatus: call('wallet:status'),
+  walletCreate: call('wallet:create'),
+  walletImport: call('wallet:import'),
+  walletReset: call('wallet:reset'),
+  walletUnlock: call('wallet:unlock'),
+  walletLock: call('wallet:lock'),
+  walletExport: call('wallet:export'),
+  walletVerify: call('wallet:verify'),
+  walletWithdraw: call('wallet:withdraw'),
+  getSettings: call('settings:get'),
+  setSettings: call('settings:set'),
+  setProfile: call('settings:profile'),
+  autopilot: call('settings:autopilot'),
+  shareSettings: call('settings:share'),
+  applySharedSettings: call('settings:applyShared'),
+  resetStats: call('stats:reset'),
+  botStart: call('bot:start'),
+  botStop: call('bot:stop'),
+  botSell: call('bot:sell'),
+  botSellAll: call('bot:sellAll'),
+  resetPractice: call('bot:resetPractice'),
+  scanWallet: call('reclaim:scan'),
+  closeEmpty: call('reclaim:close'),
+  sellEverything: call('wallet:sellEverything'),
+  sellHolding: call('wallet:sellHolding'),
+  incineratorCloseAll: call('inc:closeAll'),
+  incineratorBurn: call('inc:burn'),
+  openExternal: call('open:external'),
+  onState: (cb) => ipcRenderer.on('state', (_e, s) => cb(s)),
+  onPositions: (cb) => ipcRenderer.on('positions', (_e, list) => cb(list)),
+  onLog: (cb) => ipcRenderer.on('log', (_e, l) => cb(l)),
+});

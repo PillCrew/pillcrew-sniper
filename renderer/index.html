@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PillCrew Sniper</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Icon set: 24px grid, 1.75 stroke, round joins -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></symbol>
+      <symbol id="i-feed" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+      <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></symbol>
+      <symbol id="i-pill" viewBox="0 0 24 24"><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z"/><path d="m8.5 8.5 7 7"/></symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 4v16a1 1 0 0 0 1.5.86l13-8a1 1 0 0 0 0-1.72l-13-8A1 1 0 0 0 6 4z"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2.5"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+      <symbol id="i-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></symbol>
+      <symbol id="i-zap" viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+      <symbol id="i-key" viewBox="0 0 24 24"><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></symbol>
+      <symbol id="i-trend" viewBox="0 0 24 24"><path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/></symbol>
+      <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
+      <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+      <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+    </defs>
+  </svg>
+
+  <canvas id="bg3d" aria-hidden="true"></canvas>
+  <div class="bg-fallback" aria-hidden="true"></div>
+
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <img class="brand-logo" src="assets/logo.png" alt="PillCrew logo">
+        <div><b>PillCrew</b><small>SNIPER</small></div>
+      </div>
+      <nav id="nav">
+        <button data-tab="dashboard" class="active"><svg class="ic"><use href="#i-dashboard"/></svg>Dashboard</button>
+        <button data-tab="feed"><svg class="ic"><use href="#i-feed"/></svg>Live Feed</button>
+        <button data-tab="wallet"><svg class="ic"><use href="#i-wallet"/></svg>Wallet</button>
+        <button data-tab="settings"><svg class="ic"><use href="#i-sliders"/></svg>Settings</button>
+        <button data-tab="guide"><svg class="ic"><use href="#i-book"/></svg>Beginner Guide</button>
+        <button data-tab="crew"><svg class="ic"><use href="#i-pill"/></svg>PillCrew</button>
+      </nav>
+      <div class="side-foot">
+        <button class="linkbtn" data-link="https://pillcrew.fun/"><svg class="ic"><use href="#i-globe"/></svg>pillcrew.fun<svg class="ic sm"><use href="#i-external"/></svg></button>
+        <div class="mode-badge" id="sideMode">Practice Mode</div>
+        <div class="conn" id="conn"><span class="dot"></span><span id="connText">Offline</span></div>
+        <div class="conn" id="rpcInfo"><span class="dot ok"></span><span id="rpcText">RPC: auto</span></div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <!-- DASHBOARD -->
+      <section id="tab-dashboard" class="tab active">
+        <header class="page-head">
+          <div>
+            <div class="eyebrow">Overview</div>
+            <h1>Dashboard</h1>
+            <p class="sub" id="heroSub">Press Start and the bot hunts new Pump.fun coins for you. Practice Mode uses fake money.</p>
+          </div>
+          <div class="head-actions">
+            <div class="seg" id="modeSeg">
+              <button data-mode="paper" class="active">Practice</button>
+              <button data-mode="live">Real Money</button>
+            </div>
+            <button class="btn big" id="startBtn" disabled title="Loading your settings"><svg class="ic"><use href="#i-play"/></svg><span>Start Bot</span></button>
+          </div>
+        </header>
+
+        <div class="card ready" id="readyCard"></div>
+        <div class="card banner-note" id="pauseNote" hidden></div>
+
+        <div class="grid cards">
+          <div class="card stat"><div class="chip-ic"><svg class="ic"><use href="#i-wallet"/></svg></div><label>Balance <span class="tip" data-tip="In Practice Mode this is fake SOL. In Real Money mode it is your wallet balance.">i</span></label><b id="sBalance">0.000</b><small>SOL</small></div>
+          <div class="card stat"><div class="chip-ic"><svg class="ic"><use href="#i-trend"/></svg></div><label>Profit / Loss <span class="tip" data-tip="Real Money: what the wallet really did since Start - worked out from the transactions themselves, so fees, tips and rejected orders are all inside it, plus the coins it still holds at the price they trade at. Practice: the sum of practice trades after fees.">i</span></label><b id="sPnl">0.000</b><small id="sPnlSub">SOL</small></div>
+          <div class="card stat"><div class="chip-ic"><svg class="ic"><use href="#i-target"/></svg></div><label>Win rate</label><b id="sWin">–</b><small id="sWinSub">no trades yet</small></div>
+          <div class="card stat"><div class="chip-ic"><svg class="ic"><use href="#i-zap"/></svg></div><label>Buys / min <span class="tip" data-tip="How many coins the bot bought in the last 60 seconds. It depends on how many good coins appear.">i</span></label><b id="sBpm">0</b><small>last 60 s</small></div>
+          <div class="card stat"><div class="chip-ic"><svg class="ic"><use href="#i-radar"/></svg></div><label>Coins tracked</label><b id="sSeen">0</b><small id="sFeed">since start</small></div>
+          <div class="card stat"><div class="chip-ic"><svg class="ic"><use href="#i-gauge"/></svg></div><label>Order speed <span class="tip" data-tip="How long the bot takes from its decision to your transaction being sent, for the last buy and the last sell. A private RPC (Settings) makes both faster. Real Money mode only.">i</span></label><b id="sLat">–</b><small>ms buy · <span id="sSell">–</span> ms sell</small></div>
+        </div>
+
+        <div class="grid main2">
+          <div class="card">
+            <div class="card-head"><h2>Performance</h2><span class="muted" id="curveNote"></span></div>
+            <div id="curve" class="curve"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2>Top picks right now</h2></div>
+            <div id="picks" class="list empty">Start the bot to see the best-scoring coins live.</div>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <div class="card">
+            <div class="card-head"><h2>Open positions</h2><button class="btn ghost small" id="sellAllBtn">Sell all</button></div>
+            <div id="positions" class="list empty">No open positions. The bot buys when a coin looks strong.</div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2>Recent trades</h2></div>
+            <div id="history" class="list empty">Closed trades show up here.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Activity</h2></div>
+          <div id="log" class="log"></div>
+        </div>
+        <p class="legal">Trading meme coins is extremely risky and you can lose everything you put in. Nothing here is financial advice. Never deposit money you cannot afford to lose.</p>
+      </section>
+
+      <!-- FEED -->
+      <section id="tab-feed" class="tab">
+        <header class="page-head"><div><div class="eyebrow">Market</div><h1>Live Feed</h1><p class="sub">Every new Pump.fun launch plus trending, boosted and brand-new coins from the market scan. The bot scores each one from 0 to 100 and buys only the strong ones.</p></div></header>
+        <p class="hint" id="feedMeta"></p>
+        <div class="card table-card">
+          <table>
+            <thead><tr><th>Coin</th><th>Found by</th><th>Age</th><th>Market cap</th><th>5m</th><th>Buyers</th><th>Net buying</th><th>Score</th><th>Status</th><th></th></tr></thead>
+            <tbody id="feedBody"></tbody>
+          </table>
+          <div id="feedEmpty" class="list empty">Start the bot to see new coins stream in live.</div>
+        </div>
+      </section>
+
+      <!-- WALLET -->
+      <section id="tab-wallet" class="tab">
+        <header class="page-head"><div><div class="eyebrow">Funds</div><h1>Wallet</h1><p class="sub">Your own wallet, stored encrypted on this computer. Only you hold the key.</p></div></header>
+        <div id="walletBody"></div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section id="tab-settings" class="tab">
+        <header class="page-head"><div><div class="eyebrow">Configuration</div><h1>Settings</h1><p class="sub">Three quick choices and you are done. Everything saves automatically.</p></div></header>
+
+        <div class="card presets">
+          <div class="card-head"><h2>One press</h2><span class="muted">sets the numbers that matter</span></div>
+          <p class="hint">The preset is the plan that survived measurement on the live market, written in the same net-of-everything percentages the rules use. It is deliberately a one-slot, patient desk: a small wallet pays most of its costs in fixed tips, so the preset trades less, banks a part early, and lets the rest of a winner run. Your ticket and your mode are never touched.</p>
+          <div class="preset-actions">
+            <button class="btn big" id="autopilotBtn"><svg class="ic"><use href="#i-zap"/></svg><span>Apply the best settings for profit</span></button>
+            <span class="msg" id="autopilotMsg"></span>
+          </div>
+          <ul class="preset-list">
+            <li><b>Fees</b> smart fees on, priority ceiling 0.0002 SOL, slippage ceiling 12%</li>
+            <li><b>Entry</b> score 68+, 8 buyers, +2 SOL net, 25+ holders, band 20 to 150 SOL, pool 2000 USD+, only a coin up 4 to 35% in 5 min, priced at the bonding curve</li>
+            <li><b>Exit</b> 70% sold at +18%, the rest rides to +130% or until the trailing stop gives back 45% of its own peak (arm +12%, floor 8 points), hard stop 9%, hold 240 s</li>
+            <li><b>No break-even order</b> it sells at your own cost of doing business; the trailing stop is what protects a winner</li>
+            <li><b>Patience</b> a take profit must hold 400 ms before it sells, so one spike is not a fill; a stop or a trail acts in 150 ms</li>
+            <li><b>Risk</b> 1 coin at a time, 10 buys a minute, pause 8 min after 5 losses, session cap 8 tickets</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Quick setup</h2><span class="muted">saves as you press</span></div>
+          <div class="qs-label"><span class="qs-n">1</span>Pick your style</div>
+          <div class="grid three" id="profiles">
+            <button class="profile" data-profile="safe"><span class="p-ic"><svg class="ic"><use href="#i-shield"/></svg></span><h3>Safe</h3><p>Fewer trades, only the strongest coins. Lower risk, lower reward.</p></button>
+            <button class="profile" data-profile="balanced"><span class="p-ic"><svg class="ic"><use href="#i-gauge"/></svg></span><h3>Balanced <span class="badge">Recommended</span></h3><p>Best mix of safety and speed, with fees kept as low as they can go.</p></button>
+            <button class="profile" data-profile="aggressive"><span class="p-ic"><svg class="ic"><use href="#i-zap"/></svg></span><h3>Aggressive</h3><p>More trades, faster entries, wider risk. Can lose money quickly.</p></button>
+          </div>
+          <div class="qs-label"><span class="qs-n">2</span>How much SOL per coin?</div>
+          <div class="chips" id="amountChips"></div>
+          <div class="amount-custom">
+            <label for="amountCustom">Custom</label>
+            <input id="amountCustom" type="number" min="0.001" max="1" step="0.001" placeholder="for example 0.15" inputmode="decimal" />
+            <button class="btn ghost small" id="amountCustomSave">Use it</button>
+            <span class="hint">0.001 to 1 SOL. A hard cap of 5 SOL protects the wallet whatever you type.</span>
+          </div>
+          <p class="hint" id="amountHint"></p>
+          <div class="qs-label"><span class="qs-n">3</span>Helpers</div>
+          <div class="toggles" id="toggles"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Integrations</h2><span class="muted">Optional</span></div>
+          <div class="integ">
+            <div>
+              <h3>PumpDev <span class="badge">Recommended</span></h3>
+              <p class="hint">The live trade stream. Free key, 50,000 trade messages a month, launches are not counted. Without it the bot only hears about launches and reads prices from the market scan, which is slower on exits.</p>
+              <div class="keyrow"><input id="pdKey" type="password" placeholder="PumpDev API key" autocomplete="off" spellcheck="false"><button class="btn ghost small" id="pdSave">Save</button><button class="btn ghost small" data-link="https://pumpdev.io/my-account">Get a key<svg class="ic sm"><use href="#i-external"/></svg></button></div>
+            </div>
+            <div>
+              <h3>Jupiter <span class="badge">Built in</span></h3>
+              <p class="hint">The backup swap route, and the price service the bot reads four times a second. It needs no key and no account - nothing to set up here.</p>
+            </div>
+            <div>
+              <h3>Sol Incinerator</h3>
+              <p class="hint">Burns leftover coins and closes accounts to get your SOL back (2% of the recovered rent). Closing empty accounts is also free in the Wallet tab without a key.</p>
+              <div class="keyrow"><input id="incKey" type="password" placeholder="Sol Incinerator API key (optional)" autocomplete="off" spellcheck="false"><button class="btn ghost small" id="incSave">Save</button><button class="btn ghost small" data-link="https://api.dashboard.sol-incinerator.com/dashboard">Get a key<svg class="ic sm"><use href="#i-external"/></svg></button></div>
+            </div>
+          </div>
+          <span id="keyMsg" class="msg"></span>
+        </div>
+
+        <details class="card adv" id="advanced">
+          <summary>Advanced settings <span class="muted">for experienced users</span></summary>
+          <div class="card-head" style="margin-top:16px"><h2>Trade settings</h2><span class="muted" id="costNote"></span></div>
+          <div class="form-grid" id="settingsForm"></div>
+          <div class="card-foot"><button class="btn" id="saveSettings">Save settings</button><span id="saveMsg" class="msg"></span></div>
+
+          <div class="card-head" style="margin-top:26px"><h2>Connection (RPC)</h2></div>
+          <p class="hint">A private node (for example from Helius) makes the live feed and your transactions faster and unlocks the on-chain feed. It is tried first. Free public nodes are used as backup.</p>
+          <div class="form-grid"><label class="field wide"><span>Custom RPC URL (optional)</span><input id="rpcUrl" type="text" placeholder="https://…" spellcheck="false"></label></div>
+          <div id="rpcList" class="rpc-list"></div>
+        </details>
+
+        <div class="card" id="shareCard">
+          <div class="card-head"><h2>Share your settings</h2><span class="muted">a code, not your keys</span></div>
+          <p class="hint">Copy the code and post it. Anyone who pastes it gets your entry bar and your whole exit plan - and nothing else: never your keys, your RPC address, your wallet or your mode.</p>
+          <div class="form-grid">
+            <label class="field wide"><span>Your code</span><input id="shareCode" type="text" readonly spellcheck="false"></label>
+          </div>
+          <div class="actions">
+            <button class="btn ghost" id="copyShare">Copy code</button>
+            <button class="btn ghost" id="postShare">Post on X</button>
+            <span id="shareMsg" class="msg"></span>
+          </div>
+          <div class="form-grid" style="margin-top:14px">
+            <label class="field wide"><span>Paste someone's code</span><input id="shareInput" type="text" placeholder="PCS1.…" spellcheck="false"></label>
+          </div>
+          <div class="card-foot"><button class="btn" id="applyShare">Apply these settings</button><span id="shareApplyMsg" class="msg"></span></div>
+        </div>
+
+        <div class="card" id="statsCard">
+          <div class="card-head"><h2>Statistics</h2><span class="muted">two separate books</span></div>
+          <p class="hint">Practice money and real money keep separate books, so a practice session never flatters or ruins your real win rate. Resetting clears the numbers and the closed trades of that book. Open positions are left alone and nothing on chain is touched.</p>
+          <div class="actions">
+            <button class="btn ghost" id="resetPaperStats"><svg class="ic"><use href="#i-refresh"/></svg>Reset practice statistics</button>
+            <button class="btn ghost" id="resetLiveStats"><svg class="ic"><use href="#i-refresh"/></svg>Reset real money statistics</button>
+            <button class="btn ghost" id="resetPractice"><svg class="ic"><use href="#i-refresh"/></svg>Reset practice balance to 5 SOL</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- GUIDE -->
+      <section id="tab-guide" class="tab">
+        <header class="page-head"><div><div class="eyebrow">Learn</div><h1>Beginner Guide</h1><p class="sub">Everything you need to know about Pump.fun in two minutes.</p></div></header>
+        <div class="grid two">
+          <div class="card prose"><h2>What is Pump.fun?</h2><p>Pump.fun is a site where anyone can launch a meme coin on Solana in seconds. Thousands launch every day. Most go to zero, a few go up very fast.</p></div>
+          <div class="card prose"><h2>What does this bot do?</h2><p>It watches every new coin on Pump.fun and every trade it can see. It checks how many real people are buying, how fast the price moves, whether one wallet is faking volume and whether the creator dumped. If a coin scores high, it buys a small amount and sells automatically for profit or to cut losses.</p></div>
+          <div class="card prose"><h2>Start safely</h2><ol><li>Stay in <b>Practice Mode</b> and watch a few trades.</li><li>Create your wallet in the <b>Wallet</b> tab and back up your key.</li><li>Deposit a small amount of SOL.</li><li>Switch to <b>Real Money</b> with the <b>Balanced</b> style.</li></ol></div>
+          <div class="card prose"><h2>Key words</h2><dl>
+            <dt>SOL</dt><dd>The coin used to pay for everything on Solana.</dd>
+            <dt>Market cap</dt><dd>The total value of a coin. Low means early and risky.</dd>
+            <dt>Take profit</dt><dd>Sell automatically after a gain.</dd>
+            <dt>Stop loss</dt><dd>Sell automatically after a loss, so it cannot get worse.</dd>
+            <dt>Slippage</dt><dd>The most price movement you accept while buying or selling. Smart fees keeps it as tight as the coin allows.</dd>
+            <dt>Priority fee</dt><dd>A small tip that makes your transaction faster. Smart fees follows the live network price so you never overpay.</dd>
+            <dt>Private key</dt><dd>The secret that controls your wallet. Never share it.</dd>
+          </dl></div>
+        </div>
+        <div class="card prose warn"><h2>Be honest with yourself about risk</h2><p>Most meme coins lose value. Fees (about 1.5% per side) and fast price swings mean the bot can lose money even when it works as designed. Past results do not predict the future. Only use money you can afford to lose.</p></div>
+        <button class="btn ghost" id="replayTour">Show welcome tour again</button>
+      </section>
+
+      <!-- PILLCREW -->
+      <section id="tab-crew" class="tab">
+        <header class="page-head"><div><div class="eyebrow">Community</div><h1>PillCrew</h1><p class="sub">News, updates and the community behind PillCrew Sniper.</p></div></header>
+        <div class="card crew">
+          <img src="assets/logo.png" alt="PillCrew" class="crew-logo">
+          <div>
+            <h2>Welcome to the crew</h2>
+            <p class="hint">Get the latest version, tips for beginners and community updates on our website.</p>
+            <div class="actions"><button class="btn big" data-link="https://pillcrew.fun/"><svg class="ic"><use href="#i-globe"/></svg>Open pillcrew.fun<svg class="ic sm"><use href="#i-external"/></svg></button></div>
+            <p class="hint" style="margin-top:14px">Links open in your normal browser. PillCrew will never ask for your private key or password.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal" class="modal hidden"><div class="modal-box" id="modalBox"></div></div>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="vendor/three.js"></script>
+  <script src="scene3d.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

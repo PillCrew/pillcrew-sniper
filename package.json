@@ -1,0 +1,72 @@
+{
+  "name": "pillcrew-sniper",
+  "productName": "PillCrew Sniper",
+  "version": "1.0.0",
+  "description": "PillCrew Sniper - beginner-friendly Pump.fun trading bot with a built-in wallet",
+  "main": "main.js",
+  "author": {
+    "name": "PillCrew",
+    "email": "hello@pillcrew.fun"
+  },
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/rpc.test.js && node test/chain.test.js && node test/smoke.js && node test/modules.test.js && node test/market.test.js && node test/exits.test.js && node test/guards.test.js && node test/wallet.test.js && node test/share.test.js && node test/jito.test.js && node test/curve.test.js",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
+    "postinstall": "node scripts/vendor.js",
+    "prestart": "node scripts/vendor.js",
+    "predist": "node scripts/vendor.js"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.0",
+    "bs58": "^5.0.0",
+    "three": "^0.170.0",
+    "ws": "^8.18.0"
+  },
+  "overrides": {
+    "rpc-websockets": "9.1.1"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.pillcrew.sniper",
+    "productName": "PillCrew Sniper",
+    "artifactName": "PillCrew-Sniper-${version}-${os}-${arch}.${ext}",
+    "npmRebuild": false,
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**",
+      "renderer/**",
+      "package.json",
+      "!node_modules/three/**",
+      "!**/node_modules/utf-8-validate/**",
+      "!**/node_modules/bufferutil/**"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.finance"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Finance",
+      "maintainer": "PillCrew <hello@pillcrew.fun>"
+    }
+  }
+}

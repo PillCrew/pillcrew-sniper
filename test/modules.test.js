@@ -1,0 +1,412 @@
+const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const reclaim = require('../src/reclaim');
+const { Jupiter } = require('../src/jupiter');
+const { Market } = require('../src/market');
+const { Incinerator } = require('../src/incinerator');
+const { Store } = require('../src/store');
+const { Engine, DEFAULTS } = require('../src/engine');
+
+const fakeFetch = (handler) => { global.fetch = async (url, opts) => handler(url, opts || {}); };
+const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) });
+
+(async () => {
+  // ---- reclaim (pure logic) ----
+  const parsed = (pub, amount, state = 'initialized', lamports = 2039280) => ({ pubkey: pub, account: { lamports, data: { parsed: { info: { mint: 'M' + pub, state, tokenAmount: { amount, uiAmount: Number(amount), decimals: 6 } } } } } });
+  const accts = reclaim.normalise(reclaim.TOKEN_PROGRAM, [parsed('a', '0'), parsed('b', '500'), parsed('c', '0', 'frozen'), parsed('d', '0')]);
+  const sum = reclaim.summarise(accts);
+  assert.strictEqual(sum.empty.length, 2); assert.strictEqual(sum.dust.length, 1); assert.strictEqual(sum.frozen.length, 1);
+  assert.ok(Math.abs(sum.emptyRentSol - 0.00407856) < 1e-9);
+  const ix = reclaim.closeInstruction('acc', 'dest', 'own', 'prog');
+  assert.deepStrictEqual([...ix.data], [9]); assert.strictEqual(ix.keys[2].isSigner, true); assert.strictEqual(ix.keys[0].isWritable, true);
+  const sent = [];
+  const many = Array.from({ length: 30 }, (_, i) => ({ pubkey: 'p' + i, amount: '0', frozen: false, lamports: 2039280, program: 'x' }));
+  many.push({ pubkey: 'full', amount: '9', frozen: false, lamports: 1, program: 'x' }, { pubkey: 'frz', amount: '0', frozen: true, lamports: 1, program: 'x' });
+  const r = await reclaim.closeEmpty({ accounts: many, sendChunk: async (g) => { sent.push(g.map((a) => a.pubkey)); if (sent.length === 2) throw new Error('boom'); return 'sig' + sent.length; } });
+  assert.strictEqual(sent.length, 3);                              // 30 accounts, 12 per tx
+  assert.ok(!sent.flat().includes('full') && !sent.flat().includes('frz'), 'never closes funded or frozen accounts');
+  assert.strictEqual(r.closed, 18); assert.strictEqual(r.errors.length, 1); // failed batch does not stop the others
+
+  // ---- Jupiter hint mapping ----
+  // RULE CHANGED: the app reads Jupiter through the market scanner, so the dead trending() client is gone. What
+  // still matters is that the hint maps the fields the API really returns: priceChange is already a percentage, the
+  // audit block is the only safety signal, and there is no liquidity figure at all.
+  const mkt = new Market();
+  const hint = mkt._hintOf({
+    id: 'AAAA1111111111111111111111111111111111111', name: 'Hot', symbol: 'HOT', dev: 'DEV111',
+    mcap: 42000, stats5m: { priceChange: 12.5, numBuys: 40, numSells: 10, buyVolume: 900, sellVolume: 300 },
+    audit: { mintAuthorityDisabled: false, freezeAuthorityDisabled: true, devBalancePercentage: 12.5 },
+  });
+  assert.strictEqual(hint.change5m, 12.5, 'a percentage stays a percentage');
+  assert.strictEqual(hint.netUsd, 600);
+  assert.strictEqual(hint.creator, 'DEV111');
+  assert.strictEqual(hint.mintRisk, true, 'a live mint authority is a real risk');
+  assert.strictEqual(hint.freezeRisk, false);
+  assert.strictEqual(hint.liqUsd, 0, 'Jupiter publishes no pool depth');
+  assert.strictEqual(hint.devHoldPct, 12.5);
+  const safe = mkt._hintOf({ id: 'B', symbol: 'B', audit: { mintAuthorityDisabled: true, freezeAuthorityDisabled: true } });
+  assert.strictEqual(safe.mintRisk, false);
+  assert.strictEqual(safe.freezeRisk, false);
+
+  // The swap client still has its own failure handling, and it refuses a route it did not get.
+  const swapArgs = { keypair: { publicKey: { toBase58: () => 'x' } }, inputMint: 'a', outputMint: 'b', amountRaw: '1', slippageBps: 100 };
+  const jup = new Jupiter();
+  fakeFetch(() => res(401, {})); await assert.rejects(jup.swap(swapArgs), (e) => e.kind === 'auth');
+  fakeFetch(() => res(429, {})); await assert.rejects(jup.swap(swapArgs), /rate limit/i);
+  fakeFetch(() => res(200, { transaction: null }));
+  await assert.rejects(jup.swap(swapArgs), /no route/i);
+  // RULE CHANGED: Jupiter needs no key at all now - measured on 2026-11-04 the order endpoint returned a real quote
+  // in about 120 ms without one - so the client never sends a key header and the setting is gone from the app.
+  let sawKeyHeader = false;
+  fakeFetch((u, o) => { if (o.headers['x-api-key']) sawKeyHeader = true; return res(200, { transaction: null }); });
+  await assert.rejects(jup.swap(swapArgs), /no route/i);
+  assert.strictEqual(sawKeyHeader, false, 'the backup route is keyless');
+  // A quote for a different amount is refused before anything is signed.
+  fakeFetch(() => res(200, { transaction: 'AA==', inAmount: '999' }));
+  await assert.rejects(jup.swap(swapArgs), /different amount/i);
+
+  // ---- Sol Incinerator client ----
+  let call;
+  fakeFetch((url, o) => { call = { url, o }; return res(200, { transactions: ['t'], accountsClosed: 3 }); });
+  const inc = new Incinerator(() => 'INCKEY');
+  const out = await inc.batchCloseAll('Wallet1', 100);
+  assert.strictEqual(call.url, 'https://v2.api.sol-incinerator.com/batch/close-all');
+  assert.strictEqual(call.o.headers['x-api-key'], 'INCKEY');
+  assert.deepStrictEqual(JSON.parse(call.o.body), { userPublicKey: 'Wallet1', limit: 100, offset: 0 });
+  assert.strictEqual(out.accountsClosed, 3);
+  await inc.burn('Wallet1', 'Mint1'); assert.deepStrictEqual(JSON.parse(call.o.body), { userPublicKey: 'Wallet1', assetId: 'Mint1', autoCloseTokenAccounts: true });
+  fakeFetch(() => res(401, { error: 'bad' })); await assert.rejects(inc.burn('w', 'm'), /rejected the API key/);
+  fakeFetch(() => res(429, {})); await assert.rejects(inc.burn('w', 'm'), /rate limit/);
+  await assert.rejects(new Incinerator(() => '').burn('w', 'm'), /Add your Sol Incinerator API key/);
+
+  // ---- engine: feed choice, retries, late landing, Jupiter backup ----
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-'));
+  const wallet = { exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: { publicKey: { toBase58: () => 'W' } } };
+  const store = new Store(dir, 's.json', DEFAULTS);
+  const e = new Engine(wallet, store);
+  clearInterval(e._bal); clearInterval(e._ui); e.refreshBalance = () => {};
+  let used = null; e._connectPortal = () => { used = 'portal'; }; e._startChain = () => { used = 'chain'; };
+  e.wantWs = false; e._connect(); assert.strictEqual(used, 'portal', 'auto without private RPC goes straight to the working feed');
+  store.set({ rpcUrl: 'https://private.example/key' }); e._connect(); assert.strictEqual(used, 'chain', 'auto with private RPC uses the blockchain feed');
+  store.set({ rpcUrl: '', feedSource: 'chain' }); e._connect(); assert.strictEqual(used, 'chain');
+  store.set({ feedSource: 'auto' });
+
+  store.set({ mode: 'live', rpcUrl: '' });
+  e.running = true; e.walletBalance = 5;
+  const mk = (mint) => { const t = { mint, name: 'T', symbol: 'T', creator: 'c', createdAt: Date.now() - 60000, mc: 40, mcHist: [], trades: [], devSold: false, status: 'watching', score: 70, reason: '', lastActivity: Date.now() }; e.tokens.set(mint, t); return t; };
+  const ev = { score: 80, m: { buyers: 6 } };
+
+  // The backup route answers without a key now, so a build failure goes there first. Here it is made to fail as
+  // well, which is what a coin with no Jupiter route looks like.
+  e._jupiterSwap = async () => { throw new Error('Jupiter has no route'); };
+  let attempts = 0;
+  e._execLive = async () => { attempts++; if (attempts === 1) { const err = new Error('Trade API timed out'); err.phase = 'build'; throw err; } return { sig: 's', raw: null }; };
+  // RULE CHANGED: confirmation now has three outcomes ('confirmed' / 'failed' / 'unknown'), because "the RPC could
+  // not tell me" must never be read as "it failed".
+  e._confirm = async () => ({ state: 'confirmed', err: '' }); e._tokenBalanceRaw = async () => 0n;
+  const t1 = mk('M1'); await e._buy(t1, ev);
+  assert.strictEqual(e.positions.size, 0); assert.strictEqual(t1.status, 'watching'); assert.ok(t1.retryAt > Date.now(), 'failed buy is retried, not abandoned');
+  e._evalOne(t1, Date.now()); assert.strictEqual(e.positions.size, 0, 'retry waits for its cooldown');
+  t1.retryAt = 0; await e._buy(t1, ev);
+  assert.strictEqual(e.positions.get('M1').status, 'open');
+
+  e._execLive = async () => { throw new Error('sendRawTransaction timed out'); }; e._confirm = async () => ({ state: 'unknown', err: '' }); e._tokenBalanceRaw = async () => 5n;
+  const t2 = mk('M2'); await e._buy(t2, ev);
+  assert.strictEqual(e.positions.get('M2').status, 'open', 'a buy that landed late is adopted, not orphaned');
+
+  e._tokenBalanceRaw = async () => 0n;
+  e._jupiterSwap = async () => 'jsig';
+  e._execLive = async () => { const err = new Error('Trade API timed out'); err.phase = 'build'; throw err; };
+  const t3 = mk('M3'); await e._buy(t3, ev);
+  assert.strictEqual(e.positions.get('M3').sig, 'jsig', 'the backup route is used when the order could not be built');
+
+  // A failure AFTER the send is a different animal: the transaction may already be on chain, so the backup route
+  // must never fire, or the same coin is bought twice with real money.
+  let jupiterCalled = false;
+  e._jupiterSwap = async () => { jupiterCalled = true; return 'jsig2'; };
+  e._execLive = async () => { throw new Error('sendRawTransaction timed out'); };
+  e._tokenBalanceRaw = async () => 0n;
+  const t4 = mk('M4'); await e._buy(t4, ev);
+  assert.strictEqual(jupiterCalled, false, 'a send failure never starts a second purchase');
+  assert.ok(!e.positions.has('M4'), 'and no phantom position is booked');
+  assert.strictEqual(t4.status, 'skipped', 'a send whose outcome the RPC cannot confirm is skipped, never re-bought');
+
+  // Extra entry filters: the holder bar. While the switch is on, a coin under the bar is refused before any order,
+  // and a coin whose holder count cannot be read is refused too - a filter that silently passes when its data
+  // source is down is not a filter.
+  store.set({ deepEntry: true, minHolders: 20 });
+  e.market.holders = async () => ({ holders: 7 });
+  const t5 = mk('M5'); await e._buy(t5, ev);
+  assert.ok(!e.positions.has('M5'), 'a coin under the holder bar is not bought');
+  assert.match(t5.reason, /Needs 20 holders \(has 7\)/, 'and the reason names the bar and the count');
+  assert.strictEqual(t5.status, 'watching', 'the coin stays on the list');
+
+  e.market.holders = async () => null;
+  const t6 = mk('M6'); await e._buy(t6, ev);
+  assert.ok(!e.positions.has('M6'), 'an unknown holder count is not bought');
+  assert.match(t6.reason, /Holder count unknown/);
+
+  // Once the count is known it is the evaluator that refuses the coin, with no request at all.
+  const nowH = Date.now();
+  const t7 = mk('M7');
+  t7.holders = 7;
+  t7.mc = 44;
+  t7.trades = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({ ts: nowH - 1000, side: 'buy', sol: 0.5, trader: 'w' + n }));
+  t7.mcHist = [[nowH - 2000, 40], [nowH, 44]];
+  t7.lastStreamAt = nowH;
+  let holderCalls = 0;
+  e.market.holders = async () => { holderCalls++; return { holders: 40 }; };
+  const held = e._eval(t7, nowH);
+  assert.match(held.reason, /Needs 20 holders \(has 7\)/, `the cached gate refuses before any other rule, got "${held.reason}"`);
+  t7.holders = 40;
+  assert.strictEqual(e._eval(t7, nowH).reason, 'Looks strong', 'a coin over the bar passes as before');
+  assert.strictEqual(holderCalls, 0, 'the evaluator never asks for a count it already has');
+  store.set({ deepEntry: false, minHolders: 0 });
+
+  // sell: confirmation timed out but tokens are gone -> treated as sold
+  e._execLive = async () => ({ sig: 's', raw: null }); e._confirm = async () => ({ state: 'unknown', err: '' }); e._tokenBalanceRaw = async () => 0n; e._scheduleReclaim = () => {};
+  await e._sell(e.positions.get('M1'), 'Time limit');
+  assert.ok(!e.positions.has('M1') && e.history[0].symbol === 'T', 'late-landing sell is detected');
+
+  // RULE CHANGED (v2 rewrite): the Jupiter-only "trending" feeder became the market sweep, so the tracker is fed
+  // through _adopt() with a source tag and a hint. The market module now marks a coin it knows came from
+  // Pump.fun, and the engine trusts that flag instead of guessing from the door name.
+  e.positions.clear(); e.tokens.clear();
+  assert.ok(e._adopt({ mint: 'TR1', source: 'trending', launched: true, hint: { name: 'N', symbol: 'S', mintRisk: true, mcapUsd: 6000, liqUsd: 9000, change5m: 12, buys: 40, sells: 10, creator: 'DEV' } }));
+  assert.ok(!e._adopt({ mint: 'TR1', source: 'callout' }), 'no duplicates');
+  assert.strictEqual(e.tokens.get('TR1').launched, true, 'a Jupiter pump.fun coin counts as launched');
+  assert.strictEqual(e.tokens.get('TR1').creator, 'DEV', 'the dev is known from the hint, so the coin is not judged blind');
+  assert.strictEqual(e.tokens.get('TR1').creatorUnknown, false);
+  assert.strictEqual(e._adopt({ mint: 'BLIND1', source: 'callout' }), true);
+  assert.strictEqual(e.tokens.get('BLIND1').launched, false, 'a boosted coin has no launch proof until its pair is priced');
+  assert.strictEqual(e.tokens.get('BLIND1').creatorUnknown, true);
+
+  const tt = e.tokens.get('TR1');
+  // RULE CHANGED: the reason names a fact from the token audit instead of a field Jupiter does not publish.
+  assert.strictEqual(e._eval(tt, Date.now()).reason, 'Creator can still mint more');
+  delete tt.ext.mintRisk;
+  tt.ext.freezeRisk = true;
+  assert.strictEqual(e._eval(tt, Date.now()).reason, 'Token can be frozen');
+  delete tt.ext.freezeRisk;
+  tt.ext.devHoldPct = 55;
+  assert.strictEqual(e._eval(tt, Date.now()).reason, 'Creator holds too much');
+  delete tt.ext.devHoldPct;
+
+  // A coin from a callout has no launch history: it is judged on market data alone, and a non-pump pair is dropped.
+  e._adopt({ mint: 'CL1', source: 'callout' });
+  assert.ok(e.tokens.get('CL1'), 'adopted');
+  e._applyMarket('CL1', { mint: 'CL1', dexId: 'raydium', mcapUsd: 12000, liqUsd: 20000, priceNative: 0.000012, priceUsd: 1, buys: 30, sells: 5, change5m: 20, netUsd: 500 });
+  assert.strictEqual(e.tokens.get('CL1').status, 'skipped', 'a coin that is not on Pump.fun is dropped');
+  e._adopt({ mint: 'CL2', source: 'callout' });
+  e._applyMarket('CL2', { mint: 'CL2', dexId: 'pumpfun', mcapUsd: 12000, liqUsd: 20000, priceNative: 0.000012, priceUsd: 1, buys: 30, sells: 5, change5m: 20, netUsd: 500 });
+  assert.strictEqual(e.tokens.get('CL2').status, 'watching', 'a pump.fun pair is kept');
+  assert.ok(e.tokens.get('CL2').mc > 0, 'and it gets a price from the market');
+
+  // Market metrics replace the stream when there are no live trades: the coin can now be scored at all.
+  const cm = e._metrics(e.tokens.get('CL2'), Date.now(), 20);
+  assert.strictEqual(cm.source, 'market');
+  assert.strictEqual(cm.buys, 30);
+  assert.ok(cm.growth > 0.1, 'the 5m move is read as growth');
+
+  // RULE ADDED: a dollar figure cannot be turned into SOL without an exchange rate. It used to be divided by a
+  // made-up 1, which booked thousands of SOL of net buying and handed every scanned coin full marks on the strongest
+  // entry rule. Without a rate the honest reading is zero - no evidence of buying - so the coin does not pass.
+  const wasRate = e.market.solUsd;
+  e.market.solUsd = 0;
+  assert.strictEqual(e._metrics(e.tokens.get('CL2'), Date.now(), 20).net, 0, 'no exchange rate, no invented net flow');
+  e.market.solUsd = 150;
+  assert.ok(e._metrics(e.tokens.get('CL2'), Date.now(), 20).net > 0, 'with a rate the net flow is real again');
+  e.market.solUsd = wasRate;
+
+  // A position with no live stream is priced from the quote the market gives, so it can hit its target or its stop.
+  e.market.solUsd = 100;
+  const pos = { mint: 'CL2', symbol: 'S', entryMc: 120, mc: 120, solIn: 0.02, feeBuy: 0.0001, openedAt: Date.now(), status: 'open', paper: false };
+  e.positions.set('CL2', pos);
+  // RULE CHANGED: the market board no longer moves the price a position is measured at - on a fresh coin its quote is
+  // an aggregate of every pool, not the one the order fills against. It only supplies the fallback quote, which is what
+  // the price service also does, and the arithmetic is asserted through that path.
+  // RULE ADDED: a quote is only a price while it is recent (`pxPullAt`). A held position whose curve is silent, whose
+  // price service answer stopped coming back and whose board row is gone used to keep trading on the last number it
+  // ever saw - and a rule firing on that is a sale at a price that no longer exists.
+  pos.pxPull = 1;
+  pos.pxPullAt = Date.now();
+  e._pricePosition(pos, Date.now());
+  assert.strictEqual(pos.mc, 120, 'the baseline is the entry');
+  pos.pxPull = 1.3;
+  pos.pxPullAt = Date.now();
+  e._pricePosition(pos, Date.now());
+  assert.ok(Math.abs(e._pnlPct(pos) - (30 - e._costPct(pos))) < 0.01, `a +30% price move must show net of every cost, got ${e._pnlPct(pos)}`);
+  {
+    const frozen = pos.mc;
+    pos.pxPull = 2.2;
+    pos.pxPullAt = Date.now() - 30000;
+    e._pricePosition(pos, Date.now());
+    assert.strictEqual(pos.mc, frozen, 'a quote nobody refreshed for 30 s is not a price');
+    pos.pxPullAt = Date.now();
+    pos.pxPull = 1.3;
+    e._pricePosition(pos, Date.now());
+  }
+  // RULE CHANGED: the percentage is net of the tips too, and the tips are the ones the trade really pays - the entry
+  // tip recorded on the position and what an exit would cost right now - not the configured ceiling. On a 0.02 SOL
+  // ticket with a 0.0001 entry tip and a 0.0002 exit tip that is 1.5% of the round trip, where a fixed-amount tip of
+  // 0.0002 both ways on a 0.004 ticket is 10%. That is exactly why the old defaults looked like they lost money: a
+  // "break even" that fired at 0% was really booked at -2% (and at -10% on a 0.004 ticket).
+  assert.ok(Math.abs(e._costPct(pos) - (3 + 1.5)) < 0.01, `3% protocol plus the real 1.5% of tips on 0.02, got ${e._costPct(pos)}`);
+
+  // A quote that jumps further than anything believable in one tick does not drag the price: the anchor stays put, so
+  // one wild print on a thin pool cannot show +135% and then -70% a second later.
+  const before = pos.mc;
+  pos.pxPull = 4;
+  pos.pxPullAt = Date.now();
+  e._pricePosition(pos, Date.now());
+  assert.strictEqual(pos.mc, before, 'an implausible quote is not believed');
+
+  // The stream, when it is alive, is the price: it comes from the bonding curve the order itself fills against.
+  // RULE CHANGED: a position used to keep the stream price for the rest of its life once a single trade had been seen,
+  // so a coin whose stream went quiet froze at its last stream price and its stop could never fire.
+  pos.extRef = null;
+  e.tokens.get('CL2').lastStreamAt = Date.now();
+  e.tokens.get('CL2').mc = 156;
+  e._pricePosition(pos, Date.now());
+  assert.ok(Math.abs(pos.mc - 156) < 0.01, 'a fresh stream sets the price');
+  e.tokens.get('CL2').lastStreamAt = Date.now() - 30000;
+  pos.extRef = null;
+  pos.pxPull = 2;
+  pos.pxPullAt = Date.now();
+  e._pricePosition(pos, Date.now());
+  assert.ok(Math.abs(pos.mc - 156) < 0.01, 'a silent stream hands the price to the quote, anchored where it left off');
+  pos.pxPull = 2.6;
+  pos.pxPullAt = Date.now();
+  e._pricePosition(pos, Date.now());
+  assert.ok(Math.abs(pos.mc - 202.8) < 0.01, `and then it follows it, got ${pos.mc}`);
+
+  // A free trade stream caps live token subscriptions (PumpDev: 25) and control messages (40 per 10 s). The app
+  // used to subscribe to every scanned coin, which broke both caps and dropped the stream; it now sends one
+  // batched call for the best candidates plus every open position.
+  e.positions.clear(); e.tokens.clear(); e._subbed = new Set();
+  const wire = [];
+  e.ws = { readyState: 1, send: (raw) => wire.push(JSON.parse(raw)) };
+  const { WebSocket: WS } = require('ws');
+  e.ws.readyState = WS.OPEN;
+  // RULE ADDED: the token-trade verbs only exist on the PumpDev stream, so a PumpPortal socket must never be sent
+  // them - it would read them as a launch filter and the feed would go quiet.
+  e._feedLabel = 'pumpportal';
+  e._syncSubscriptions();
+  assert.strictEqual(wire.length, 0, 'no token subscription went to a launches-only socket');
+  e._feedLabel = 'pumpdev';
+  for (let i = 0; i < 40; i++) {
+    e._adopt({ mint: 'S' + i, source: 'callout' });
+    const t = e.tokens.get('S' + i);
+    t.mc = 40;
+    t.score = i;
+  }
+  e._syncSubscriptions();
+  assert.strictEqual(wire.length, 1, 'one batched control message, not one per coin');
+  assert.strictEqual(wire[0].method, 'subscribeTokenTrade');
+  assert.strictEqual(wire[0].keys.length, 20, 'the subscription budget is respected');
+  assert.ok(wire[0].keys.includes('S39'), 'the highest score is watched');
+
+  e.positions.set('POS1', { mint: 'POS1', entryMc: 40, mc: 40 });
+  wire.length = 0;
+  e._syncSubscriptions();
+  assert.ok(wire.some((m) => m.keys.includes('POS1')), 'an open position is always watched');
+  assert.strictEqual(e._subbed.size, 20, 'the budget still holds after adding a position');
+
+  // RULE ADDED: the watched set is sticky. Re-ranking alone must not swap coins in and out - every swap is a control
+  // message and the plan counts the subscribe and the unsubscribe, which is what tripped "25 subscriptions per IP"
+  // while only twenty were ever wanted.
+  const flip = () => {
+    for (let i = 0; i < 40; i++) e.tokens.get('S' + i).score = i < 20 ? 100 - i : 1;
+  };
+  flip();
+  wire.length = 0;
+  e._syncSubscriptions();
+  assert.strictEqual(wire.length, 0, 'a re-rank alone changes nothing while the watched coins are active');
+
+  // A newcomer does take a slot - but only from a coin that has been quiet, and only by a clear margin.
+  for (const mint of e._subbed) { const t = e.tokens.get(mint); if (t) t.lastActivity = Date.now() - 120000; }
+  e._syncSubscriptions();
+  assert.ok(wire.some((m) => m.method === 'subscribeTokenTrade'), 'the better candidates get in once the others are quiet');
+  assert.strictEqual(e._subbed.size, 20, 'and the budget is still respected');
+
+  wire.length = 0;
+  e.tokens.clear(); e.positions.clear();
+  e._syncSubscriptions();
+  assert.strictEqual(wire[0].method, 'unsubscribeTokenTrade', 'coins that were dropped are released in one call');
+  assert.strictEqual(e._subbed.size, 0);
+  e.ws = null;
+
+  // A fresh buy on the stream must never make a coin that fell hard look alive: the entry is judged on the worse
+  // of the stream window and the market's five minute change. Measured on the live feed: a coin down 84% in five
+  // minutes was offered to the desk with a score of 92 because one trade had ticked up.
+  e.tokens.clear();
+  e._adopt({ mint: 'DUMP1', source: 'curve', launched: true, hint: { symbol: 'DUMP', name: 'Dump', priceNative: 0.00000003, liqUsd: 9000, change5m: -84, buys: 24, sells: 40 } });
+  const dump = e.tokens.get('DUMP1');
+  for (let i = 0; i < 6; i++) dump.trades.push({ ts: Date.now(), side: 'buy', sol: 1, trader: 'w' + i });
+  dump.lastStreamAt = Date.now();
+  dump.score = 0;
+  assert.match(e._eval(dump, Date.now()).reason, /Dumping hard/, 'a crashed coin is refused even when a trade ticks up');
+
+  e._adopt({ mint: 'SELL1', source: 'curve', launched: true, hint: { symbol: 'SELL', name: 'Sell', priceNative: 0.00000003, liqUsd: 9000, change5m: 8, buys: 6, sells: 30 } });
+  const sellers = e.tokens.get('SELL1');
+  assert.match(e._eval(sellers, Date.now()).reason, /Sellers in control/, 'a market dominated by sellers is refused');
+
+  // ---- simple settings: only the basic numbers decide ----
+  // RULE ADDED: the simple mode gates the entry on the market cap band, the buyer floor and ceiling, and a price that
+  // is not falling. The score, the net flow, the depth, the dev bags and the five minute band are advanced rules, and
+  // while the simple mode is on they stop deciding.
+  store.set({ simpleMode: true, maxBuyers: 5, minBuyers: 3, minNetFlowSol: 1, minMcSol: 20, maxMcSol: 100 });
+  e.tokens.clear();
+  const simp = (mint, traders) => {
+    const t = { mint, name: 'T', symbol: 'T', creator: 'c', createdAt: Date.now() - 5000, mc: 40, mcHist: [], trades: [], devSold: false, devBuySol: 0, status: 'watching', score: 70, reason: '', lastActivity: Date.now(), lastStreamAt: Date.now() };
+    for (let i = 0; i < traders; i++) t.trades.push({ ts: Date.now(), side: 'buy', sol: 0.2, trader: 'w' + i });
+    e.tokens.set(mint, t);
+    return t;
+  };
+  const tFine = simp('SIMOK', 4); // 0.8 SOL of net buying - under the desk's 1 SOL bar, above the simple floor
+  assert.strictEqual(e._eval(tFine, Date.now()).pass, true, 'the simple gate asks only for the band, the buyers and a price that is not falling');
+  const tCrowd = simp('SIMCROWD', 6);
+  assert.match(e._eval(tCrowd, Date.now()).reason, /Too many buyers \(6, cap 5\)/, 'the buyer ceiling fires in simple mode');
+  store.set({ simpleMode: false });
+  assert.match(e._eval(tCrowd, Date.now()).reason, /Too many buyers/, 'and the same ceiling also gates the full desk');
+
+  // RULE ADDED: the exit ladder keeps only the plain rules in the simple mode - the target, the stop and the time
+  // limit. The first rung, the trail and the break even are advanced rules and are off while the mode is on, exactly
+  // as the panel promises.
+  store.set({ simpleMode: true, takeProfitPct: 25, tp1Pct: 12, tp1SellPct: 50, trailArmPct: 8, breakEvenPct: 5, maxHoldSec: 600 });
+  e.running = false; e.tokens.clear(); e.positions.clear();
+  const realPnl = e._pnlPct;
+  const realSell = e._sell;
+  const realFee = e._refreshFee;
+  e._refreshFee = () => {};
+  const sold = []; e._sell = (p, why) => { sold.push(why); p.status = 'closed'; };
+  const pSim = { mint: 'PTICK', status: 'open', entryMc: 100, mc: 115, peakMc: 130, tp1Done: false, openedAt: Date.now() - 20000, pxAt: 115, trigger: null };
+  e.positions.set('PTICK', pSim);
+  e._pnlPct = () => 15; // past tp1 (12), under the target (25): the full desk would bank the first rung
+  e._tick();
+  assert.strictEqual(pSim.trigger, null, 'simple mode has no first rung');
+  assert.strictEqual(sold.length, 0);
+  store.set({ simpleMode: false });
+  e._tick();
+  assert.strictEqual(pSim.trigger && pSim.trigger.rule, 'Take profit part 1', 'the full desk still uses the first rung');
+  store.set({ simpleMode: true });
+  pSim.trigger = null;
+  e._pnlPct = () => 30;
+  e._tick();
+  assert.strictEqual(pSim.trigger && pSim.trigger.rule, 'Take profit', 'the target still fires in simple mode');
+  pSim.trigger = null;
+  e._pnlPct = () => -15;
+  e._tick();
+  assert.strictEqual(pSim.trigger && pSim.trigger.rule, 'Stop loss', 'and the stop still fires in simple mode');
+  e._pnlPct = realPnl; e.positions.clear(); e._sell = realSell; e._refreshFee = realFee;
+  // RULE CHANGED: the settings touched above are put back exactly, so the store the rest of the suite shares is clean.
+  store.set({ simpleMode: false, maxBuyers: 0, minBuyers: DEFAULTS.minBuyers, minNetFlowSol: DEFAULTS.minNetFlowSol, minMcSol: DEFAULTS.minMcSol, maxMcSol: DEFAULTS.maxMcSol, takeProfitPct: DEFAULTS.takeProfitPct, stopLossPct: DEFAULTS.stopLossPct, tp1Pct: DEFAULTS.tp1Pct, tp1SellPct: DEFAULTS.tp1SellPct, trailArmPct: DEFAULTS.trailArmPct, breakEvenPct: DEFAULTS.breakEvenPct, maxHoldSec: DEFAULTS.maxHoldSec });
+
+  console.log('Modules test passed');
+  process.exit(0);
+})().catch((err) => { console.error(err); process.exit(1); });
+
+
+
