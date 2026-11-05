@@ -25,8 +25,11 @@ no account, no server, no subscription, and your wallet key never leaves the mac
 | **macOS 12+** | `PillCrew-Sniper-<version>-mac-arm64.dmg` (Apple silicon) or `…-mac-x64.dmg` (Intel) |
 | **Linux x64** | `PillCrew-Sniper-<version>-linux-x86_64.AppImage` or `…-linux-amd64.deb` |
 
-Prebuilt installers live on the [releases page](https://github.com/PillCrew/pillcrew-sniper/releases). Unsigned builds
-need one click through SmartScreen on Windows, or one right-click → Open on macOS.
+Prebuilt installers are published on the
+[releases page](https://github.com/PillCrew/pillcrew-sniper/releases). The first public release goes out after the
+testing rounds, so if that page is still empty, use the source route below — or build the package yourself in one
+command ([docs/BUILD.md](docs/BUILD.md)). Unsigned builds need one click through SmartScreen on Windows, or one
+right-click → Open on macOS.
 
 ### Run from source (all three systems)
 
@@ -39,8 +42,8 @@ npm ci
 npm start
 ```
 
-`npm ci` downloads Electron once (~100 MB) and copies three.js into `renderer/vendor`. A hidden-window smoke test, the
-guidance for FUSE on Linux, the macOS quarantine flag, Wayland scaling and every common error are in
+`npm ci` downloads Electron once (~100 MB) and copies three.js into `renderer/vendor`. The FUSE requirement on Linux,
+the macOS quarantine flag, Wayland scaling, the hidden-window smoke test and every common error are covered in
 **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 ## What it looks like
@@ -112,8 +115,9 @@ npm test          # 12 node suites: rpc, chain, smoke, engine modules, market, e
 npm run test:ui   # Electron, hidden window, mock wallet, engine stopped
 ```
 
-Every push runs both on **Windows and Ubuntu** through GitHub Actions. The suite never touches the network, a real
-wallet or real money.
+Every push runs both on **Windows and Ubuntu** through GitHub Actions. Nothing in the suite touches your wallet or real
+money, and every market, Jito and RPC call is stubbed; the separate `test/live-dryrun.js` script does talk to the
+network and is never part of `npm test`.
 
 ## Build your own installers
 

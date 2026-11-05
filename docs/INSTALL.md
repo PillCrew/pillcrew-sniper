@@ -13,6 +13,9 @@ Two ways to get the app:
 Both run the same program. The app keeps **everything on your computer**: no account, no server, no subscription.
 Your wallet key is encrypted with a password you choose and never leaves the machine.
 
+> **No release published yet?** Route B works on all three systems and needs nothing but Node.js. Building the
+> installer yourself takes one command on the matching system — see [BUILD.md](BUILD.md).
+
 ---
 
 ## Windows 10 / 11 (x64)
@@ -193,8 +196,9 @@ npm run test:ui   # opens a hidden window with a mock wallet and a stopped engin
 npm run backtest -- events.jsonl settings.json   # optional: replay a recorded session
 ```
 
-A healthy `npm test` ends with `Audit regression tests passed`. Nothing in the suite touches the network, your wallet
-or real money.
+A healthy `npm test` ends with `Audit regression tests passed`. Nothing in the suite touches your wallet or real money,
+and the market, Jito and RPC calls are stubbed. The separate `test/live-dryrun.js` script does reach the network and
+needs a wallet password; it is never part of the suite.
 
 ---
 
