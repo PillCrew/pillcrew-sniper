@@ -3,6 +3,27 @@
 All notable changes to this project are recorded here. The format follows Keep a Changelog and the
 project uses semantic versioning.
 
+## [1.0.7] - 2026-11-06
+
+### Copy trading: follow a wallet's buys
+
+`copyWallets` (Settings → **Copy these wallets**) takes up to twenty Solana addresses. When one of them **buys** a coin
+the desk is watching, the coin is entered at once instead of waiting for the score, the buyer bar and the market cap
+band — the feature Dorado and Soldrift advertise as copy trading or "sniping po dev wallet".
+
+What it deliberately does **not** bypass, because these protect the money and not the opinion: a free slot, the
+buys-per-minute pace, the cooldown after a close, the round-trip fee gate, the session loss limit and the losing-streak
+pause, the balance check with exit fees kept aside, the pool's own price (or the coin's fresh tape) with the "price
+dropped while judged" refusal, and the live on-chain mint check. Two further refusals are its own: a mint quoted in
+another token, and a creator who already sold his launch.
+
+**Sells are never mirrored.** The exit ladder — target, stop, trail, peak give-back, hold limit — stays ours; a full
+mirror hands the one decision that keeps a winner to a stranger.
+
+The roster is validated where it is typed: a half-typed address is dropped, and Settings refuses to save a list with a
+line that is not an address at all. Off until an address is typed, and `test/copy.test.js` holds every one of the rules
+above (both mutations — removing the hook, removing the creator-sold refusal — fail it).
+
 ## [1.0.6] - 2026-11-06
 
 ### Documentation

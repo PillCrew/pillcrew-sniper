@@ -296,6 +296,31 @@ not bought, and a position still has to close.
 The numbers the mode hides stay in the store untouched: switching back restores the full desk exactly as
 it was.
 
+## Copy trading (following a wallet)
+
+`copyWallets` holds up to twenty Solana addresses, separated by spaces, commas or new lines, in
+**Settings → Copy these wallets**. When one of them **buys** a coin the desk is watching, the coin is entered at once
+instead of waiting for the score, the buyer bar and the market cap band — that is the whole point of following
+somebody.
+
+What a copied entry still goes through, because they protect the money and not the opinion:
+
+| Still enforced | Where |
+| --- | --- |
+| A free position slot, the buys-per-minute pace, the cooldown after a close | `_buy` |
+| Round-trip fee gate, the session loss limit, the pause after a losing streak | `_buy` |
+| The wallet has the SOL, with the exit fees kept aside | `_buy` |
+| The pool's own price (or the coin's fresh tape) and the "price dropped while judged" refusal | `_entryPrice` |
+| On-chain mint check in Real Money, so a copy cannot buy a mintable or freezable token | `risk.check` |
+| A mint quoted in another token, or a creator who already sold his own launch | `_copyBuy` |
+
+**Sells are never mirrored.** The exit ladder in this app — target, stop, trail, peak give-back, hold limit — is the
+part that keeps a winner, and it stays ours. A wallet that buys twenty coins a minute is limited by the same slots and
+pace as everything else.
+
+The roster is plain text: a half-typed address is dropped, and Settings refuses to save a list with a line that is not
+an address at all. Copy trading is off until an address is typed — the shipped default follows nobody.
+
 ## Market and data
 
 | Key | Default | Meaning |

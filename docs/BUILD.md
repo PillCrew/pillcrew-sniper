@@ -18,7 +18,7 @@ electron-builder to 26.18.1; packaging output goes to `dist/` and is ignored by 
 
 ```sh
 npm ci
-npm test          # 12 node suites, no network, no wallet, no real money
+npm test          # 13 node suites, stubbed network, no wallet, no real money
 npm run test:ui   # Electron: hidden window, mock wallet, engine stopped
 npm start         # Practice Mode
 ```

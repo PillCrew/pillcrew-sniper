@@ -191,7 +191,7 @@ rm -rf "$HOME/.config/PillCrew Sniper"
 Run these from the repository folder. They are the same commands CI runs on Windows and Linux for every push:
 
 ```sh
-npm test          # 12 suites: RPC pool, chain feed, engine, market, exits, guards, wallet, settings sharing, Jito, curve, audit
+npm test          # 13 suites: RPC pool, chain feed, engine, market, exits, guards, wallet, settings sharing, Jito, curve, copy trading, audit
 npm run test:ui   # opens a hidden window with a mock wallet and a stopped engine
 npm run backtest -- events.jsonl settings.json   # optional: replay a recorded session
 ```

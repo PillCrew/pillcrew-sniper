@@ -820,6 +820,10 @@
         ['chain', 'Blockchain only (needs good RPC)'],
         ['pumpportal', 'PumpPortal (launches only)'],
       ].map(([v, l]) => h('option', { value: v, selected: settings.feedSource === v }, l))), h('span', {}, 'Automatic uses PumpDev with a configured key, otherwise Solana program logs. PumpPortal provides launch discovery if the chain feed fails.')));
+    // Copy trading: follow a wallet's BUYS. Its own row, because the value is a list of addresses, not a number.
+    form.append(h('label', { class: 'field', style: 'grid-column: 1 / -1' }, h('span', {}, 'Copy these wallets (optional)'),
+      h('textarea', { rows: '2', 'data-key': 'copyWallets', spellcheck: 'false', placeholder: 'One or more Solana addresses, separated by spaces or new lines' }, String(settings.copyWallets || '')),
+      h('span', {}, 'When one of these wallets buys a coin this desk is watching, the coin is entered at once instead of waiting for the score and buyer bars. Slots, pace, fees, the session limit and the pool price still apply, and their sells are not mirrored - the exit ladder here is your own.')));
     if (!settings.simpleMode) {
       const deep = h('div', { id: 'deepPanel', class: 'deep-panel', hidden: !settings.deepEntry },
         h('div', { class: 'deep-head' }, h('b', {}, 'Extra entry filters'), h('small', {}, 'holders and the market cap band')));
@@ -863,6 +867,9 @@
       const k = el.dataset.key;
       if (el.type === 'checkbox') patch[k] = el.checked;
       else if (el.tagName === 'SELECT') patch[k] = el.value;
+      // RULE ADDED 2026-11-06 (1.0.7): the copy roster is text (addresses), not a number - without this branch the form
+      // would turn "7xKX...abc" into NaN and refuse to save with "Invalid number in: copyWallets".
+      else if (el.tagName === 'TEXTAREA' || el.type === 'text') patch[k] = String(el.value || '').trim();
       else { const v = Number(el.value); if (!Number.isFinite(v) || v < 0) { toast('Invalid number in: ' + k, true); return; } patch[k] = v; }
     }
     if (patch.buyAmountSol <= 0) { toast('Buy amount must be above 0.', true); return; }

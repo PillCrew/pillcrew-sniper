@@ -96,7 +96,8 @@ verified profit figure.
 - **Feeds** — Pump.fun program-log WebSocket decoding, PumpPortal, optional PumpDev, plus market discovery from the
   boards, with fallback between doors and a named reason when one is rate limited.
 - **Entries** — scoring, creator-sale detection, wallet concentration, mint/freeze authority checks on chain, token
-  2022 screening, coin-age clocks, buyer and net-flow bars, per-minute pace and slot limits.
+  2022 screening, coin-age clocks, buyer and net-flow bars, per-minute pace and slot limits, and **copy trading**: type
+  a wallet in Settings and its next buy is entered at once, still through every money guard.
 - **Exits** — take profit (with partials), stop loss, trailing stop, peak give-back, break-even, holding limit, "price
   lost" and an adaptive order-flow exit.
 - **Money** — pump.fun bonding curve and PumpSwap pools, tips and priority fees with a round-trip cost gate, Jito
@@ -117,11 +118,12 @@ All of these are optional and stay in `settings.json` on your own disk:
 | `pumpdevKey` | PumpDev's trade stream instead of the public one |
 | `jupiterKey` | A higher Jupiter price quota for the market scan |
 | `incineratorKey` | Bulk closure of empty token accounts |
+| `copyWallets` | One or more addresses to follow: their next **buy** is entered at once, past the score and buyer bars, through the usual money guards. Their sells are not mirrored |
 
 ## Tests
 
 ```sh
-npm test          # 12 node suites: rpc, chain, smoke, engine modules, market, exits, guards, wallet, settings sharing, Jito, curve, audit
+npm test          # 13 node suites: rpc, chain, smoke, engine modules, market, exits, guards, wallet, settings sharing, Jito, curve, copy trading, audit
 npm run test:ui   # Electron, hidden window, mock wallet, engine stopped
 ```
 

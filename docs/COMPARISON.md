@@ -38,7 +38,7 @@ Checked against the public READMEs on **2026-11-06**: Chainstack `pumpfun-bonkfu
 | pump.fun bonding curve trading | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | PumpSwap after graduation | ✅ | ✅ | ✅ | ✅ | — | ✅ | — |
 | Raydium / Meteora | ❌ | — | — | ✅ Raydium | — | ✅ both | — |
-| Copy trading (follow a wallet) | ❌ | — | — | — | ✅ stated | — | — |
+| Copy trading (follow a wallet) | ✅ `src/engine.js` (`copyWallets`) | — | — | — | ✅ stated | — | — |
 | Take profit / stop loss | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Trailing stop / peak give-back / break-even | ✅ | — | — | — | ✅ trailing stop | — | — |
 | Position, pace and session-loss limits | ✅ | — | — | — | — | — | — |
@@ -47,7 +47,7 @@ Checked against the public READMEs on **2026-11-06**: Chainstack `pumpfun-bonkfu
 | One signed transaction to several RPCs | ✅ `src/rpc.js` | — | — | — | — | — | — |
 | Rent recovery from empty token accounts | ✅ `src/reclaim.js` | ✅ cleanup | — | — | — | — | — |
 | Recorded-session replay / backtest | ✅ `src/backtest.js`, `src/simulation.js` | — | — | — | — | — | — |
-| Tests + CI on every push | ✅ 12 node suites + Electron UI, Windows **and** Linux | — | — | — | — | — | — |
+| Tests + CI on every push | ✅ 13 node suites + Electron UI, Windows **and** Linux | — | — | — | — | — | — |
 | Installers for Windows, macOS, Linux | ✅ `docs/BUILD.md` | — | — | — | — | — | — |
 | Its own README says "not for production" | — (we ship it as a product, with limits stated) | ✅ says exactly that | — | — | — | — | — |
 
@@ -59,12 +59,13 @@ Checked against the public READMEs on **2026-11-06**: Chainstack `pumpfun-bonkfu
    earlier is a real advantage in a sniper, and no amount of UI makes up for it.
 2. **Raydium and Meteora.** We trade pump.fun curves and PumpSwap pools. A coin that migrates to Raydium left our
    market.
-3. **Copy trading.** Following a good wallet is a feature Dorado documents and we do not have.
+3. **Copy trading has a narrower promise than Dorado's.** We follow a wallet's *buys* and manage the exit ourselves; a
+   bot that mirrors somebody's sells hands the one decision that keeps a winner to a stranger.
 4. **Language of the market.** Two of those projects are Rust with a shred stream in front; our whole path is Node.js.
    Ours is fast enough for a UI-driven bot (the numbers are in [SETTINGS.md](SETTINGS.md)), it is not a Rust shred
    consumer and will not pretend to be.
 
-## What we would add to beat them outright
+## What we would add next
 
 In the order that would actually pay for itself:
 
@@ -72,7 +73,6 @@ In the order that would actually pay for itself:
    provider endpoint to prove, and a key the user brings — the app must keep working without it.
 2. **Post-migration trading** (Raydium CPMM / AMM and Meteora): the exits and the guards are already market-agnostic,
    the work is the pool math and the account layouts.
-3. **Copy trading**: the chain feed already decodes wallet-level trades, so a watched wallet is a new entry source, not
-   a new data path — with its own cap, because a copied entry is still a decision.
+3. **Alerts** (desktop notification when a position opens or closes) and a second submission route beside Jito.
 
-None of the three is started. Nothing above is a promise of profit.
+None of these is started. Nothing above is a promise of profit.

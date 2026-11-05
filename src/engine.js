@@ -148,6 +148,12 @@ const PROFILES = {
     maxDevBuySol: 12, maxDevHoldPct: 30, maxTraderSharePct: 40,
     maxChange5mPct: 0, minChange5mPct: 0, deepEntry: true, minHolders: 0, maxBuyers: 0,
     minTokenAgeSec: 0, maxTokenAgeSec: 0, maxRoundTripPct: 8,
+    // RULE ADDED 2026-11-06 (1.0.7): "sniping po dev wallet" / copy trading, the feature Dorado and Soldrift advertise.
+    // A comma or newline separated list of base58 addresses. When one of them BUYS a coin we are watching, that coin is
+    // entered at once - but only through the money guards every other entry goes through (slots, pace, cooldown, the cost
+    // gate, the balance, the pool's own price). It overrides the JUDGEMENT bars, never the safety ones, and it never
+    // mirrors a sell: the exit ladder is ours.
+    copyWallets: '',
   },
   aggressive: {
     minScore: 78, minBuyers: 30, minNetFlowSol: 2, minMcSol: 60, maxMcSol: 500,
@@ -886,6 +892,50 @@ class Engine extends EventEmitter {
     if (this.tokens.size > MAX_TRACKED) this._prune(true);
   }
 
+  /**
+   * The copy roster, parsed once per change: the shipped `copyWallets` is a string a person types, so it may carry
+   * commas, newlines or spaces between addresses. A bad token is dropped rather than thrown, because a half-typed
+   * address must never turn the desk off - and it must never silently widen what is watched either.
+   */
+  _copySet() {
+    const raw = String(this.s.copyWallets || '');
+    if (raw === this._copyRaw && this._copyCache) return this._copyCache;
+    const set = new Set();
+    for (const word of raw.split(/[\s,;]+/)) {
+      const w = word.trim();
+      if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(w)) set.add(w);
+      if (set.size >= 20) break;
+    }
+    this._copyRaw = raw;
+    this._copyCache = set;
+    return set;
+  }
+
+  /** Is this trader one of the wallets we follow? */
+  _isCopyWallet(who) {
+    const set = this._copySet();
+    return Boolean(who) && set.has(String(who));
+  }
+
+  /**
+   * A followed wallet bought something we are watching. The coin is entered NOW, without waiting for the score, the
+   * buyer bar or the five minute band - that is the whole point of following somebody - but every guard that protects
+   * the money still applies inside `_buy`, and two things refuse outright here: a mint quoted in another token, and a
+   * creator who has already sold his own launch.
+   */
+  _copyBuy(t, now, who) {
+    if (!this.running || t.status !== 'watching') return;
+    if (t.unsupported) { t.reason = 'Copied, but quoted in another token'; return; }
+    if (t.devSold) { t.reason = 'Copied, but the creator already sold'; return; }
+    const short = String(who).slice(0, 4);
+    const ev = {
+      score: Number(t.score) || 0, pass: true, reason: `Copied ${short}`, trending: Boolean(t.trending),
+      m: { buyers: Number(t.buyers) || 0, net: Number(t.net) || 0, buys: 0, sells: 0, topShare: 0, growth: Number(t.growth) || 0 },
+    };
+    this._log('info', `Copy: ${short} just bought ${t.symbol || t.mint.slice(0, 4)} - entering through the usual money guards.`);
+    this._buy(t, ev);
+  }
+
   _onTrade(m) {
     const t = this.tokens.get(m.mint);
     if (!t) return;
@@ -923,6 +973,9 @@ class Engine extends EventEmitter {
       t.lastEval = now;
       this._evalOne(t, now);
     }
+    // The copy roster is checked after the normal judgement, and only on a BUY: mirroring a sell would hand an exit
+    // decision to somebody else's wallet, and the exit ladder in this app is the thing that keeps a winner.
+    if (side === 'buy' && this._isCopyWallet(m.traderPublicKey)) this._copyBuy(t, now, m.traderPublicKey);
   }
 
   _evalOne(t, now, candidates) {

@@ -207,6 +207,16 @@ app.whenReady().then(() => {
         const lim = LIMITS[k]; if (lim && (v < lim[0] || v > lim[1])) throw new Error(`${k} must be between ${lim[0]} and ${lim[1]}`);
       }
       if (k === 'feedSource' && !['auto', 'chain', 'pumpdev', 'pumpportal'].includes(v)) throw new Error('Unknown data feed');
+      // A copy roster is a list of wallet addresses typed by hand: keep only the ones that could be a Solana address, and
+      // refuse the whole save if nothing usable is left, instead of writing a list that silently follows nobody.
+      if (k === 'copyWallets') {
+        const list = String(v).split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+        const bad = list.filter((x) => !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(x));
+        if (bad.length) throw new Error(`That is not a Solana address: ${bad[0].slice(0, 12)}…`);
+        if (list.length > 20) throw new Error('Follow at most 20 wallets.');
+        clean[k] = list.join(' ');
+        continue;
+      }
       clean[k] = v;
     }
     return clean;
