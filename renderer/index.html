@@ -218,6 +218,10 @@
           <div class="card-head" style="margin-top:26px"><h2>Connection (RPC)</h2></div>
           <p class="hint">A private node (for example from Helius) makes the live feed and your transactions faster and unlocks the on-chain feed. It is tried first. Free public nodes are used as backup.</p>
           <div class="form-grid"><label class="field wide"><span>Custom RPC URL (optional)</span><input id="rpcUrl" type="text" placeholder="https://…" spellcheck="false"></label></div>
+          <div class="form-grid">
+            <label class="field wide"><span>Backup RPC URL (optional)</span><input id="rpcBackupUrl" type="text" placeholder="a second private node, used if the first one refuses" spellcheck="false"></label>
+            <label class="field wide"><span>WebSocket URL (optional)</span><input id="rpcWsUrl" type="text" placeholder="wss://… - only when your provider's socket is on another host" spellcheck="false"></label>
+          </div>
           <div id="rpcList" class="rpc-list"></div>
         </details>
 

@@ -76,6 +76,21 @@ const { RPCManager, DEFAULT_ENDPOINTS, classify } = require('../src/rpc');
   assert.strictEqual(m4.current, DEFAULT_ENDPOINTS[0]);
   assert.strictEqual(m4.endpoints.length, DEFAULT_ENDPOINTS.length);
 
+  // RULE ADDED 2026-11-05: a desk may hold TWO private nodes, tried in the order the operator typed them, and the
+  // public pool stays behind them. Measured on the owner's own keys: a primary and a backup, both `https://`.
+  const m4b = new RPCManager({ custom: ['https://a.example/rpc', 'https://b.example/rpc'], factory: (u) => ({ u }) });
+  assert.strictEqual(m4b.current, 'https://a.example/rpc', 'the first node is the one that is used');
+  assert.strictEqual(m4b.endpoints[1], 'https://b.example/rpc', 'the second is right behind it');
+  assert.ok(m4b.endpoints.length > 2, 'and the public pool is still there as the last resort');
+  m4b.setCustoms(['https://b.example/rpc']);
+  assert.strictEqual(m4b.current, 'https://b.example/rpc', 'dropping the first node promotes the second');
+  assert.ok(!m4b.endpoints.includes('https://a.example/rpc'), 'the dropped one is gone from the pool too');
+  assert.strictEqual(m4b.endpoints.filter((u) => DEFAULT_ENDPOINTS.includes(u)).length, DEFAULT_ENDPOINTS.length,
+    'and the pool was not eaten by the custom list');
+  // A string is one node, never its characters.
+  const m4c = new RPCManager({ custom: 'https://only.example/rpc', factory: (u) => ({ u }) });
+  assert.strictEqual(m4c.current, 'https://only.example/rpc');
+
   // A call is bounded even when every node hangs: eight nodes timing out at eight seconds each used to hold a
   // sell for a minute while the price it wanted was gone.
   const m5 = new RPCManager({ timeoutMs: 400, factory: () => ({ hang: () => new Promise(() => {}) }) });

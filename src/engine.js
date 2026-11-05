@@ -254,6 +254,14 @@ const DEFAULTS = {
   maxLossStreak: 5,
   pauseMinutes: 8,
   rpcUrl: '',
+  // A second private node, tried after the first one and before the public pool. A paid desk usually has two: one for
+  // latency and one for redundancy, and a node that starts refusing is otherwise a desk that falls back to a public
+  // endpoint in the middle of a trade.
+  rpcBackupUrl: '',
+  // The trade stream's own socket. A provider's WebSocket is often on a different host than its HTTP endpoint
+  // (FluxRPC: `wss://ws.eu.fluxrpc.com` against `https://eu.fluxrpc.com`), and a URL guessed from the HTTP one simply
+  // never connects. Empty means "derive it from the RPC URL", which is what most providers allow.
+  rpcWsUrl: '',
   onboarded: false,
   ...PROFILES.balanced,
 };
@@ -372,7 +380,7 @@ class Engine extends EventEmitter {
     });
     this.inc = new Incinerator(() => this.s.incineratorKey);
     this.rpc = new RPCManager({
-      custom: store.get().rpcUrl,
+      custom: [store.get().rpcUrl, store.get().rpcBackupUrl],
       onSwitch: (from, to, why) => this._log('warn', `RPC switched (${why}): ${new URL(to).hostname}`),
     });
     this._loop = null;
@@ -387,7 +395,7 @@ class Engine extends EventEmitter {
   get s() { return this.store.get(); }
 
   /** Run an RPC call with automatic node failover. */
-  rpcCall(fn, opts) { this.rpc.setCustom(this.s.rpcUrl); return this.rpc.call(fn, opts); }
+  rpcCall(fn, opts) { this.rpc.setCustoms([this.s.rpcUrl, this.s.rpcBackupUrl]); return this.rpc.call(fn, opts); }
 
   async refreshBalance() {
     const addr = this.wallet.address();
@@ -761,7 +769,10 @@ class Engine extends EventEmitter {
   /** Primary feed: decode Pump.fun program logs straight from a Solana RPC websocket (no data API). */
   _startChain() {
     if (this.chain) return;
-    const feed = new ChainFeed({ customRpc: this.s.rpcUrl });
+    const feed = new ChainFeed({
+      customRpcs: [this.s.rpcUrl, this.s.rpcBackupUrl].filter(Boolean),
+      customWs: this.s.rpcWsUrl,
+    });
     this.chain = feed;
     this.feedSource = 'chain';
     this._chainAt = Date.now();

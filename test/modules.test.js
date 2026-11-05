@@ -525,10 +525,13 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
     e3.market.solUsd = 150;
     e3._adopt({ mint: 'CLOCK', source: 'launch' });
     const c = e3.tokens.get('CLOCK');
-    c.lastActivity = Date.now() - 100000;                     // nothing has happened for a hundred seconds
-    c.lastStreamAt = Date.now() - 100000;
+    const quietAt = Date.now() - 100000;                      // nothing has happened for a hundred seconds
+    c.lastActivity = quietAt;
+    c.lastStreamAt = quietAt;
     e3._applyMarket('CLOCK', { mint: 'CLOCK', symbol: 'CLOCK', priceNative: 0.00000004, priceUsd: 0.000004, mcapUsd: 400, dexId: 'pumpfun', quoteMint: WSOL, buys: 5, sells: 2 });
-    assert.strictEqual(c.lastActivity, Date.now() - 100000, 'the board does not pretend the coin traded');
+    // FLAKE FIXED 2026-11-05: this compared against a SECOND `Date.now()`, so the assertion failed whenever a millisecond
+    // ticked between the two - it passed for weeks and then failed at random inside `npm test`.
+    assert.strictEqual(c.lastActivity, quietAt, 'the board does not pretend the coin traded');
     assert.ok(c.lastBoardAt > 0, 'it stamps its own clock instead');
     // RULE CHANGED 2026-11-05 (replaced "a board price counts as heard, so a young coin can still be bought"): the
     // board is no longer a buy price at all. Every wrong percentage of the day came from entering on somebody else's

@@ -231,6 +231,15 @@ app.whenReady().then(() => {
     }
     if (clean.feedSource && !['auto', 'chain', 'pumpdev', 'pumpportal'].includes(clean.feedSource)) delete clean.feedSource;
     if (clean.rpcUrl && !/^https:\/\//.test(clean.rpcUrl)) throw new Error('RPC URL must start with https:// (or leave empty for automatic)');
+    if (clean.rpcBackupUrl && !/^https:\/\//.test(clean.rpcBackupUrl)) throw new Error('The backup RPC URL must start with https:// (or leave it empty)');
+    if (clean.rpcWsUrl && !/^wss?:\/\//.test(clean.rpcWsUrl)) throw new Error('The WebSocket URL must start with wss:// (or leave it empty)');
+    for (const k of ['rpcUrl', 'rpcBackupUrl', 'rpcWsUrl']) if (k in clean) clean[k] = String(clean[k] || '').trim();
+    // A node list is applied to the running desk at once: otherwise a corrected URL only took effect after a restart,
+    // and the log kept naming the node that had been replaced.
+    const switched = ['rpcUrl', 'rpcBackupUrl', 'rpcWsUrl'].some((k) => k in clean);
+    if (switched) {
+      engine.rpc.setCustoms([clean.rpcUrl ?? store.get().rpcUrl, clean.rpcBackupUrl ?? store.get().rpcBackupUrl]);
+    }
     return store.set(clean);
   }));
   ipcMain.handle('settings:profile', wrap(async (name) => {

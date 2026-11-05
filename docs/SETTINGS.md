@@ -17,11 +17,19 @@ App data folders:
 
 | Setting | What it does | Where to get it |
 | --- | --- | --- |
-| `rpcUrl` | Your own Solana RPC, tried before the public nodes. A paid node (Helius, Triton, QuickNode) is the single biggest speed-up for a live desk: the feed, the entry price read and every transaction go through it | your provider's dashboard |
-| `pumpdevKey` | The live trade stream (launches and per-coin trades). 50,000 messages a month on the free plan, launches are not counted | pumpdev.io |
-| `jupiterKey` | Sent as `x-api-key` on every Jupiter call: the backup swap route, the price service and the token lists. The public door answers about one request a second and then refuses the whole connection, which is exactly the state that made exits wait for a price | portal.jup.ag |
+| `rpcUrl` | Your own Solana RPC, tried before the public nodes. A paid node (Helius, Triton, FluxRPC, QuickNode) is the single biggest speed-up for a live desk: the feed, the entry price read and every transaction go through it | your provider's dashboard |
+| `rpcBackupUrl` | A second private node, tried right after the first and still ahead of the public pool. Measured with the owner's own keys: FluxRPC timed out once during a session and the desk moved to Helius without losing a trade | your provider's dashboard |
+| `rpcWsUrl` | The trade stream's own socket, used verbatim. A provider's WebSocket is often on a **different host** than its HTTP endpoint (FluxRPC: `wss://ws.eu.fluxrpc.com` against `https://eu.fluxrpc.com`), and a URL guessed by swapping the scheme simply never connects. Empty means derive it from the RPC URL | your provider's dashboard |
+| `pumpdevKey` | The live trade stream (launches and per-coin trades). 50,000 messages a month on the free plan, launches are not counted. The free plan also caps **25 live subscriptions per address**, which the desk respects by watching twelve | pumpdev.io |
+| `jupiterKey` | Sent as `x-api-key` on every Jupiter call: the backup swap route, the price service and the token lists | portal.jup.ag |
 | `incineratorKey` | Burns leftovers and closes the empty accounts, returning the rent (2% of what is recovered). Closing empty accounts is free in the Wallet tab without a key | Sol Incinerator dashboard |
 | `feedSource` | Which launch door to use: `auto`, `chain`, `pumpdev`, `pumpportal` | - |
+
+**What a Jupiter key does and does not buy.** Measured with a real key on 2026-11-05: twenty quick calls answered
+**five** and refused fifteen, one call every 700 ms broke on the fourth, and one every 1.1 s did not. The key is
+accepted and sent on every call, but the public tier refills at about **one request a second**, so the desk keeps its
+own bucket: two calls a second for Jupiter (a cycle asks the token index and then one wide door), separate from
+DexScreener's four. A paid tier is what raises the ceiling - the setting is what lets you bring one.
 
 Keys are validated (letters, digits, `.`, `_`, `-` only), are stored locally, are never printed back into the
 window, are never logged, and are **never** included in a shared settings code.

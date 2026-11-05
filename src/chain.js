@@ -75,10 +75,14 @@ function decodeEvent(base64) {
 }
 
 class ChainFeed extends EventEmitter {
-  /** @param {{customRpc?: string}} opts */
+  /** @param {{customRpc?: string, customRpcs?: string[], customWs?: string}} opts */
   constructor(opts = {}) {
     super();
     this.customRpc = opts.customRpc || '';
+    // The desk may hold two private nodes now; either one can serve the subscription, and the explicit socket wins.
+    this.customRpcs = (opts.customRpcs || []).filter(Boolean);
+    this.customWs = opts.customWs || '';
+    if (!this.customRpcs.length && this.customRpc) this.customRpcs = [this.customRpc];
     this.ws = null;
     this.want = false;
     this.idx = 0;
@@ -94,7 +98,16 @@ class ChainFeed extends EventEmitter {
 
   endpoints() {
     const list = [];
-    if (this.customRpc && /^https:\/\//.test(this.customRpc)) list.push(this.customRpc.replace(/^https:/, 'wss:'));
+    // An explicit socket first: a provider's WebSocket is often on another host than its HTTP endpoint, and a URL
+    // guessed by swapping the scheme never connects (FluxRPC: `wss://ws.eu.fluxrpc.com`).
+    if (this.customWs && /^wss?:\/\//.test(this.customWs)) list.push(this.customWs.trim());
+    for (const rpc of this.customRpcs || []) {
+      if (rpc && /^https:\/\//.test(rpc)) {
+        const derived = rpc.replace(/^https:/, 'wss:');
+        if (!list.includes(derived)) list.push(derived);
+      }
+    }
+    if (!list.length && this.customRpc && /^https:\/\//.test(this.customRpc)) list.push(this.customRpc.replace(/^https:/, 'wss:'));
     return list.concat(PUBLIC_WS);
   }
 

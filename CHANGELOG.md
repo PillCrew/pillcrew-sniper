@@ -7,6 +7,21 @@ project uses semantic versioning.
 
 The first public release.
 
+### A second private node, and a socket the operator can name
+
+- **`rpcBackupUrl`** - a second private node, tried right after the first and still ahead of the public pool. Measured
+  with the owner's own keys in one session: FluxRPC took a timeout and the desk switched to Helius inside the same
+  trade, with `RPC switched (timeout)` in the diary and nothing lost.
+- **`rpcWsUrl`** - the trade stream's socket, used verbatim. A provider's WebSocket is often on a **different host**
+  than its HTTP endpoint (FluxRPC: `wss://ws.eu.fluxrpc.com` against `https://eu.fluxrpc.com`); a URL guessed by
+  swapping the scheme never connects, and the feed then quietly falls back to the public one.
+- the RPC list is applied to the running desk the moment it is saved - before this, a corrected URL only took effect
+  after a restart and the log kept naming the node that had been replaced.
+- **the Jupiter budget is its own bucket**: two calls a second, kept apart from DexScreener's four. Measured with a real
+  key: twenty quick calls answered five and refused fifteen, one every 700 ms broke on the fourth, one every 1.1 s did
+  not - the public tier refills at about one request a second, and the token index (a thousand coins, all of them nice
+  to have) was spending the allowance the price service needs for a coin that is being held.
+
 ### Your own keys, and every number on the desk is a setting
 
 A professional desk is judged by what it lets the operator bring to it, so nothing it reads is hard-coded any more:

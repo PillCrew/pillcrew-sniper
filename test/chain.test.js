@@ -45,4 +45,13 @@ f._onMessage(JSON.stringify({ id: 1, result: 77 })); assert.ok(f.connected);
 assert.ok(f.endpoints().length >= 2);
 f.customRpc = 'https://mainnet.helius-rpc.com/?api-key=k';
 assert.strictEqual(f.endpoints()[0], 'wss://mainnet.helius-rpc.com/?api-key=k');
+// RULE ADDED 2026-11-05: an explicit socket wins, because a provider's WebSocket is often on another host than its
+// HTTP endpoint - FluxRPC serves `https://eu.fluxrpc.com` and `wss://ws.eu.fluxrpc.com`, and a URL guessed by
+// swapping the scheme never connects.
+f.customWs = 'wss://ws.eu.fluxrpc.com';
+assert.strictEqual(f.endpoints()[0], 'wss://ws.eu.fluxrpc.com', 'the socket the operator named is tried first');
+const g = new ChainFeed({ customRpcs: ['https://a.example/rpc', 'https://b.example/rpc'] });
+assert.deepStrictEqual(g.endpoints().slice(0, 2), ['wss://a.example/rpc', 'wss://b.example/rpc'],
+  'both private nodes are offered a socket, in order');
+assert.ok(g.endpoints().some((u) => u.startsWith('wss://api.mainnet-beta')), 'and the public ones stay as a fallback');
 console.log('ChainFeed tests passed');

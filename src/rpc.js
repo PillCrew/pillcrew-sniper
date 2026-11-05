@@ -61,19 +61,39 @@ class RPCManager {
     // them, so they are remembered instead of being dropped from the pool.
     this._noList = new Set();
     this.custom = '';
-    this.setCustom(opts.custom);
+    this._customs = [];
+    this.setCustoms(opts.custom);
   }
 
   get current() { return this.endpoints[this.index]; }
 
-  /** Optional user node (e.g. a private Helius URL). Empty string = automatic public pool only. */
+  /** Optional user nodes (e.g. a private Helius URL). A string is one node; an array is a list tried in order. */
   setCustom(url) {
-    url = url && /^https:\/\//.test(url) ? url.trim() : '';
-    if (url === this.custom) return;
-    const base = this.endpoints.filter((u) => u !== this.custom);
-    this.custom = url;
-    if (url && !this.health.has(url)) this.health.set(url, { until: 0, fails: 0, ok: 0, lastError: '' });
-    this.endpoints = url ? [url, ...base.filter((u) => u !== url)] : base;
+    this.setCustoms(Array.isArray(url) ? url : [url]);
+  }
+
+  /**
+   * The operator's own nodes, in the order they should be tried, ahead of the public pool. Duplicates and anything that
+   * is not `https://` are dropped, and a node that is no longer in the list loses its slot.
+   */
+  setCustoms(urls) {
+    // A string is one node. Iterating a string directly walks its CHARACTERS, which silently dropped every custom node
+    // in the constructor - the desk kept using the public pool while the log said a private one was set.
+    const list = typeof urls === 'string' ? [urls] : urls || [];
+    const want = [];
+    for (const u of list) {
+      const url = u && /^https:\/\//.test(u) ? String(u).trim() : '';
+      if (url && !want.includes(url)) want.push(url);
+    }
+    if (want.join('|') === (this._customs || []).join('|')) return;
+    // The pool is rebuilt from the public list every time: the custom nodes are never part of it, so removing one
+    // cannot leave a stale entry behind.
+    const base = this.endpoints.filter((u) => !(this._customs || []).includes(u) && !want.includes(u));
+    const pool = base.length ? base : DEFAULT_ENDPOINTS.slice();
+    this._customs = want;
+    this.custom = want[0] || '';
+    for (const url of want) if (!this.health.has(url)) this.health.set(url, { until: 0, fails: 0, ok: 0, lastError: '' });
+    this.endpoints = [...want, ...pool];
     this.index = 0;
   }
 

@@ -74,6 +74,10 @@ const pair = (m, extra = {}) => ({
   try {
     const market = new Market();
     const count = (rows, src) => rows.filter((r) => r.source === src).length;
+    // RULE ADDED 2026-11-05: the Jupiter budget is ONE call a second (measured on the owner's own key: twenty quick
+    // calls answered five and refused fifteen, one every 700 ms broke on the fourth). Successive discovery rounds in
+    // this test therefore wait for the allowance instead of pretending five calls fit in a second.
+    const settle = () => new Promise((r) => setTimeout(r, 1100));
 
     // Every cycle polls the newest tokens, because that list spans about one minute, and one wide door rotates
     // beside it. Asserting per source keeps the test honest when the rotation changes.
@@ -81,12 +85,23 @@ const pair = (m, extra = {}) => ({
     assert.strictEqual(count(boosts, 'callout'), 2, 'only Solana boosts are returned');
     assert.strictEqual(count(boosts, 'launch'), 1, 'the launch door answers on every cycle');
 
+    await settle();
+    // RULE ADDED 2026-11-05: the Jupiter budget is its own bucket - two calls in a second, then one a second - kept
+    // apart from DexScreener's four. Measured on the owner's own key: twenty quick calls answered five and refused
+    // fifteen, one every 700 ms broke on the fourth, one every 1.1 s did not.
+    assert.strictEqual(market._slot('jupiter', 2), true, 'the first Jupiter call in a second is allowed');
+    assert.strictEqual(market._slot('jupiter', 2), true, 'so is the second, a cycle asks the index and a door');
+    assert.strictEqual(market._slot('jupiter', 2), false, 'the third is not');
+    market._slots.jupiter = [];
+    market._slots['jup-price'] = [];
     const topBoosts = await market.discover();
     assert.strictEqual(count(topBoosts, 'callout'), 2, 'the top-boost door answers the same shape');
 
+    await settle();
     const profiles = await market.discover();
     assert.strictEqual(count(profiles, 'new'), 1, 'fresh DexScreener profiles arrive as "new"');
 
+    await settle();
     const trending = await market.discover();
     assert.strictEqual(count(trending, 'trending'), 1, 'a non-pump launchpad is filtered out');
     const hit = trending.find((c) => c.source === 'trending');
@@ -99,6 +114,7 @@ const pair = (m, extra = {}) => ({
     assert.strictEqual(hit.hint.freezeRisk, true, 'the audit block is read, not a field that does not exist');
     assert.strictEqual(hit.hint.creator, 'DEV9');
 
+    await settle();
     const traded = await market.discover();
     assert.strictEqual(count(traded, 'volume'), 1, 'the top-traded door closes the rotation');
 
@@ -107,7 +123,8 @@ const pair = (m, extra = {}) => ({
     {
       calls.length = 0;
       const wide = [];
-      for (let i = 0; i < 9; i++) wide.push(...await market.discover(true));
+      // One door per cycle on a one-a-second budget: the rotation needs nine cycles to show every door.
+    for (let i = 0; i < 9; i++) { wide.push(...await market.discover(true)); await settle(); }
       assert.ok(calls.some((u) => u.includes('/latest/dex/search?q=')), 'the search board is asked');
       assert.ok(calls.some((u) => u.includes('/new_pools')), 'the newest pools are asked');
       assert.ok(wide.some((r) => r.source === 'search'), 'and a coin from the search board reaches the board');
@@ -115,13 +132,17 @@ const pair = (m, extra = {}) => ({
       const searched = wide.find((r) => r.source === 'search');
       assert.ok(searched.hint.liqUsd > 0, 'a search coin carries the numbers it is scored on');
       calls.length = 0;
-      for (let i = 0; i < 9; i++) await market.discover(false);
+      for (let i = 0; i < 9; i++) { await market.discover(false); await settle(); }
       assert.ok(!calls.some((u) => u.includes('/latest/dex/search?q=')), 'turning it off stops the search board');
       assert.ok(!calls.some((u) => u.includes('/new_pools')), 'and the newest pools with it');
     }
 
-    // RULE ADDED: the shared bucket is now applied to every DexScreener call, so a housekeeping price call waits its
-    // turn instead of tripping a 429 - and it returns nothing rather than hammering the host.
+    // RULE ADDED 2026-11-05: the shared bucket is now applied to every DexScreener call, so a housekeeping price call
+    // waits its turn instead of tripping a 429 - and it returns nothing rather than hammering the host. The bucket is
+    // filled by hand here: the rounds above now wait a second for Jupiter's own allowance, so time can no longer
+    // guarantee the bucket is full when this line runs.
+    market._slots = {};
+    for (let i = 0; i < 4; i++) assert.ok(market._slot('dexscreener'), 'the DexScreener bucket holds four calls a second');
     assert.strictEqual((await market.enrich([mint('C')])).size, 0, 'a paced call is skipped while the bucket is full');
     market._slots = {};                               // a second later the bucket is empty again
     const rows = await market.enrich([mint('A'), mint('B'), 'not-a-mint']);
@@ -263,5 +284,7 @@ const pair = (m, extra = {}) => ({
     global.fetch = Market.prototype._origFetch;
   }
 })().catch((e) => { console.error(e); process.exit(1); });
+
+
 
 

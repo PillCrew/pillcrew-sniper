@@ -831,6 +831,8 @@
       form.append(deep);
     }
     $('#rpcUrl').value = settings.rpcUrl || '';
+    $('#rpcBackupUrl').value = settings.rpcBackupUrl || '';
+    $('#rpcWsUrl').value = settings.rpcWsUrl || '';
     const rt = 3 + (2 * settings.priorityFeeSol / Math.max(settings.buyAmountSol, 0.001)) * 100;
     // Which rule closes a position, in the order the engine checks them. The percentages are what is on screen, so a
     // sale at a number that is not the target explains itself. The simple mode reads only its own plan: saying "a
@@ -870,6 +872,8 @@
     }
     if (patch.buyAmountSol <= 0) { toast('Buy amount must be above 0.', true); return; }
     patch.rpcUrl = $('#rpcUrl').value.trim();
+    patch.rpcBackupUrl = $('#rpcBackupUrl').value.trim();
+    patch.rpcWsUrl = $('#rpcWsUrl').value.trim();
     try {
       settings = await call(api.setSettings(patch));
       $('#saveMsg').textContent = 'Saved';

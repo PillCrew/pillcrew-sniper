@@ -109,11 +109,11 @@ class Market {
    * call to it takes a slot from this bucket. The handful a second that is kept free by `urgent` belongs to the open
    * positions: a delayed exit costs money, a delayed discovery door costs one coin out of hundreds.
    */
-  _slot(host) {
+  _slot(host, max = CALLS_PER_SEC) {
     const now = Date.now();
     const slots = (this._slots[host] || []).filter((t) => now - t < 1000);
     this._slots[host] = slots;
-    if (slots.length < CALLS_PER_SEC) { slots.push(now); return true; }
+    if (slots.length < max) { slots.push(now); return true; }
     this.stats.skipped++;
     return false;
   }
@@ -125,7 +125,14 @@ class Market {
     // pollers share it, and a 429 costs more than the request it refused. The calls an exit depends on never come
     // from this host (the curve and the Jupiter price service answer those), so nothing urgent is held back. An
     // `urgent` call is one of the few that may exceed the bucket: the open positions.
-    if (host === 'dexscreener' && !urgent && !this._slot(host)) return null;
+    // RULE ADDED 2026-11-05 (measured on the owner's own Jupiter key, 2026-11-05): the free tier refills about ONE
+    // request a second - twenty quick calls answered five and refused fifteen, one call every 700 ms broke on the
+    // fourth, one every 1.1 s did not - and a key on the public tier does not change that. So Jupiter gets its own
+    // bucket: TWO calls in a second (a single cycle asks the token index and then a wide door, and five answered in a
+    // burst is what the host tolerates), then one a second. Without any bucket the token index - a thousand coins, all
+    // of them nice to have - spends the allowance the price service needs for a coin that is being held.
+    const cap = host === 'jupiter' || host === 'jup-price' ? 2 : CALLS_PER_SEC;
+    if ((host === 'dexscreener' || host === 'jupiter' || host === 'jup-price') && !urgent && !this._slot(host, cap)) return null;
     this.stats.calls++;
     try {
       const body = await getJson(url, this.getKey());
