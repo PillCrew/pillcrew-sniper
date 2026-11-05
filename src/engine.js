@@ -1555,13 +1555,17 @@ class Engine extends EventEmitter {
       const why = new Map();
       for (const t of all) {
         if (this.positions.has(t.mint) || t.status === 'bought') continue;
-        const key = String(t.reason || 'not judged yet').replace(/\(.*?\)/g, '').replace(/\d+/g, 'N').trim();
+        const key = String(t.reason || 'not judged yet')
+          .replace(/\d+/g, 'N')
+          .replace(/N-N/g, 'N - N')
+          .replace(/\s+/g, ' ')
+          .trim();
         why.set(key, (why.get(key) || 0) + 1);
       }
       const top = [...why.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
       if (top.length) {
         this._log('info', `${this.positions.size} of ${this.s.maxPositions} slots busy. The rest of the market: `
-          + top.map(([k, n]) => `${n} × ${k.toLowerCase()}`).join(', ')
+          + top.map(([k, n]) => `${n} × ${k.charAt(0).toLowerCase()}${k.slice(1)}`).join(', ')
           + '. Lower the entry bar in Settings if you want the book filled faster.');
       }
     }

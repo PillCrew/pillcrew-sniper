@@ -612,6 +612,34 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
     assert.strictEqual(e4._holderMisses, 0, 'and the outage counter is cleared');
   }
 
+  // RULE ADDED 2026-11-05 (1.0.4, the owner: "czemu od razu 10 monet nie kupuje jak dałem 10 slotów?"): a free slot is
+  // an entry-bar decision, and the diary must name it instead of leaving the screen looking asleep. One line a minute,
+  // counts by reason, the coin's own numbers folded into a placeholder so the tally groups.
+  e.tokens.set('m1', { mint: 'm1', status: 'new', reason: 'Needs 50 buyers in 5m' });
+  e.tokens.set('m2', { mint: 'm2', status: 'new', reason: 'Needs 22 buyers in 5m' });
+  e.tokens.set('m3', { mint: 'm3', status: 'new', reason: 'Market cap out of range (60-15000 SOL)' });
+  e.tokens.set('m4', { mint: 'm4', status: 'new', reason: 'Market cap out of range (60-15000 SOL)' });
+  e.tokens.set('m5', { mint: 'm5', status: 'new', reason: 'Market cap out of range (60-15000 SOL)' });
+  e.tokens.set('m6', { mint: 'm6', status: 'new', reason: 'Pool too thin' });
+  e.running = true; e._slotsAt = 0;
+  const logAt = e.logs.length;
+  e._scan(Date.now());
+  const note = e.logs.slice(logAt).map((l) => l.msg).find((m) => /slots busy/.test(m));
+  assert.ok(note, 'a free slot is reported');
+  assert.ok(/3 × market cap out of range/.test(note), 'the biggest refusal leads: ' + note);
+  assert.ok(/2 × needs N buyers in Nm/.test(note), 'even-sized refusals group despite different numbers');
+  assert.ok(/1 × pool too thin/.test(note), 'and the tail is kept');
+  assert.ok(!/needs 50/.test(note), 'the coin own numbers never appear in the tally');
+  assert.ok(/Lower the entry bar/.test(note), 'the line says what to do about it');
+  // A second scan inside the minute is silent, and a full book says nothing at all.
+  const again = e.logs.length; e._scan(Date.now() + 1000);
+  assert.strictEqual(e.logs.length, again, 'at most one line a minute');
+  e._slotsAt = 0; e.positions.set('m1', { mint: 'm1', priced: true });
+  for (const k of ['m2', 'm3', 'm4', 'm5', 'm6']) e.positions.set(k, { mint: k, priced: true });
+  const full = e.logs.length; e._scan(Date.now() + 120000);
+  assert.strictEqual(e.logs.length, full, 'a full book has nothing to explain');
+  for (const k of ['m1', 'm2', 'm3', 'm4', 'm5', 'm6']) { e.positions.delete(k); e.tokens.delete(k); }
+
   console.log('Modules test passed');
   process.exit(0);
 })().catch((err) => { console.error(err); process.exit(1); });
