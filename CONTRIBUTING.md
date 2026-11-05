@@ -14,10 +14,14 @@ PillCrew Sniper is open source (MIT). The notes below are for anyone who wants t
 ## Workflow
 
 ```
-npm install
-npm test
+npm ci        # exactly the versions in the lockfile
+npm test      # 12 node suites
+npm run test:ui
 npm start
 ```
+
+Installing on each system, and every common error, is covered in [docs/INSTALL.md](docs/INSTALL.md). Packaging is in
+[docs/BUILD.md](docs/BUILD.md).
 
 Before a release:
 

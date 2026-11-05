@@ -2,7 +2,46 @@
 
 ![PillCrew Sniper](promo/banner.png)
 
-A desktop trading app for Pump.fun with an encrypted local wallet, live market feeds, configurable entries and exits, and a separate Practice Mode.
+**A Pump.fun trading bot you can actually use.** A real desktop app with a window, a wallet inside it and a plan you
+can read — not another terminal script behind a `.env` file and a paid data plan.
+
+[![CI](https://github.com/PillCrew/pillcrew-sniper/actions/workflows/ci.yml/badge.svg)](https://github.com/PillCrew/pillcrew-sniper/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A522-339933.svg)](https://nodejs.org/)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-4b5563.svg)
+
+It watches every new coin on Pump.fun and PumpSwap, scores each one from 0 to 100, buys the strong ones and manages
+the exit on its own — take profit, stop loss, trailing exits, holding limits. Everything runs on your computer:
+no account, no server, no subscription, and your wallet key never leaves the machine.
+
+> **Trade small while you learn.** Practice Mode is free and uses fake SOL. Meme coins are extremely risky; most lose
+> value. Only trade what you can afford to lose.
+
+## Install
+
+| Platform | Command / file |
+| --- | --- |
+| **Windows 10/11** | `PillCrew-Sniper-<version>-win-x64.exe` — installs for your user, no admin rights |
+| **macOS 12+** | `PillCrew-Sniper-<version>-mac-arm64.dmg` (Apple silicon) or `…-mac-x64.dmg` (Intel) |
+| **Linux x64** | `PillCrew-Sniper-<version>-linux-x86_64.AppImage` or `…-linux-amd64.deb` |
+
+Prebuilt installers live on the [releases page](https://github.com/PillCrew/pillcrew-sniper/releases). Unsigned builds
+need one click through SmartScreen on Windows, or one right-click → Open on macOS.
+
+### Run from source (all three systems)
+
+Node.js **22 or newer**, nothing else — the app has no native modules to compile.
+
+```sh
+git clone https://github.com/PillCrew/pillcrew-sniper.git
+cd pillcrew-sniper
+npm ci
+npm start
+```
+
+`npm ci` downloads Electron once (~100 MB) and copies three.js into `renderer/vendor`. A hidden-window smoke test, the
+guidance for FUSE on Linux, the macOS quarantine flag, Wayland scaling and every common error are in
+**[docs/INSTALL.md](docs/INSTALL.md)**.
 
 ## What it looks like
 
@@ -15,59 +54,103 @@ A desktop trading app for Pump.fun with an encrypted local wallet, live market f
 | ![Wallet](screenshots/wallet.png) | ![Settings](screenshots/settings.png) |
 
 Every picture is the shipped program in Practice Mode — the real window, the real market data, not a mock-up. The
-wallet in the picture was created for the screenshot and thrown away with the profile it lived in.
+wallet in the picture was created for the screenshot and deleted with the profile it lived in.
 
-## Run locally
+## First run — five steps
 
-Use Node.js 22 or later.
+1. The app opens in **Practice Mode** with 5.000 fake SOL. Press **Start Bot** and watch it work; nothing real is at
+   risk.
+2. **Wallet → Create your wallet**, and choose a password. It encrypts the key on this computer (AES-256-GCM, scrypt).
+3. **Export the private key and keep it offline.** Without the key and the password the funds cannot be recovered —
+   by us or by anyone.
+4. Deposit a **small** amount of SOL, switch to **Real Money**, and keep the ticket small until you have seen real
+   exits land.
+5. Optional: **Settings → your own keys** for a private RPC, PumpDev, Jupiter or Sol Incinerator.
 
-```sh
-npm ci
-npm test
-npm start
-```
+## Why this one, when the market is full of scripts
 
-Start in Practice Mode. Back up your wallet key before depositing funds. A strategy preset changes its filters and exit rules; it never increases your ticket size or switches to real money.
+| | |
+| --- | --- |
+| **You can see it think** | Every tracked coin is on screen with its score, buyers, net buying and the sentence that says why it was refused. When slots are free, the Activity log counts the reasons once a minute, so a quiet book is a decision and not a mystery. |
+| **The wallet is inside** | Create, import, back up, deposit, withdraw, sell everything, recover the rent locked in empty token accounts — without a terminal and without pasting a key into a website. |
+| **One press sets a working plan** | *Best Profit* writes a full preset (entry bar, exit ladder, exposure limits) and **stops there** — it never starts the bot for you. Everything it writes stays editable. |
+| **Fast where it matters** | A coin that traded in the last 1.2 s is already priced from its own tape, so an entry reaches the order in about a quarter of a second instead of more than a second. Coins are judged four times a second; exits are measured forty times a second. |
+| **Honest books** | Practice results and real trades are separate ledgers. A measured exit uses the wallet's own SOL delta from the confirmed sale. |
+| **Bring your own endpoints** | FluxRPC, Helius, any Solana RPC plus a separate WebSocket, PumpDev, Jupiter, Sol Incinerator. All optional, all stored locally, none ever put in a settings code. |
 
 ## What is included
 
-- Pump.fun program-log WebSocket decoding, PumpPortal and optional PumpDev feeds, with fallback and market discovery.
-- Entry scoring, creator-sale detection, wallet concentration checks and configurable position, pace and loss limits.
-- Real-money entries require a known creator and fresh wallet-level trades. Mint/freeze authorities are checked on chain before buying. Missing mint data and unreviewed Token-2022 extensions block entries.
-- TP/SL, partial profit taking, trailing exits, holding limits and recovery of saved live positions.
-- The same signed transaction can be broadcast to several RPCs. Unknown outcomes are retained and checked by signature instead of immediately creating another order.
-- Local AES-256-GCM wallet encryption with scrypt, restricted IPC, transaction inspection, fee ceilings and rent recovery.
-- Practice fills with depth-sensitive slippage, configurable latency and failures. Cash and realized Practice PnL include exit fees.
-- Recorded-signal replay with deterministic results, equity drawdown, win rate and profit factor.
-- Opt-in local market recording and experimental order-flow/liquidity exits, off by default.
+- **Feeds** — Pump.fun program-log WebSocket decoding, PumpPortal, optional PumpDev, plus market discovery from the
+  boards, with fallback between doors and a named reason when one is rate limited.
+- **Entries** — scoring, creator-sale detection, wallet concentration, mint/freeze authority checks on chain, token
+  2022 screening, coin-age clocks, buyer and net-flow bars, per-minute pace and slot limits.
+- **Exits** — take profit (with partials), stop loss, trailing stop, peak give-back, break-even, holding limit, "price
+  lost" and an adaptive order-flow exit.
+- **Money** — pump.fun bonding curve and PumpSwap pools, tips and priority fees with a round-trip cost gate, Jito
+  bundle path for crowded slots, the same signed transaction broadcast to several RPCs, unknown outcomes kept and
+  checked by signature instead of being re-ordered.
+- **Wallet** — local AES-256-GCM encryption with scrypt, sandboxed renderer with context isolation and a strict CSP,
+  guarded IPC, transaction inspection before signing, fee ceilings, withdraw and rent recovery.
+- **Study** — Practice Mode with depth-aware fills, latency and failures; recorded-signal replay with win rate, profit
+  factor and drawdown; opt-in local market recording.
 
-## Presets and capital
+## Your own keys
 
-Safe and Balanced retain their existing strategy thresholds. High capital uses a 60% target, 12% stop, two concurrent positions, four entries per minute, a five-second minimum age and an 8% estimated round-trip cost ceiling. Advanced entry checks stay enabled. These are research settings, not an optimized or profitable strategy. The configured ticket is unchanged. Larger trades cause more price impact; a bigger bankroll does not remove liquidity risk.
+All of these are optional and stay in `settings.json` on your own disk:
 
-## Results and accounting
+| Setting | What it buys you |
+| --- | --- |
+| `rpcUrl` / `rpcBackupUrl` / `rpcWsUrl` | A private node and socket: lower latency, fewer rate limits, and automatic failover between the two |
+| `pumpdevKey` | PumpDev's trade stream instead of the public one |
+| `jupiterKey` | A higher Jupiter price quota for the market scan |
+| `incineratorKey` | Bulk closure of empty token accounts |
 
-Practice results and real trades have separate books. Trade history labels simulated results, estimated results and measured exits. A measured exit uses the wallet SOL delta of its confirmed sale transaction; entry fees and rent can still be estimates. The live equity panel marks open holdings from available prices, so it is not an audited cash-flow ledger. Check the explorer and wallet when reconciling funds.
-
-An unconfirmed transaction may remain pending until the chain gives a definite answer. Inspect its signature before placing an external replacement. A stop can fail, gap past its threshold or have no liquidity to fill. No preset guarantees an exit or a profit.
-
-## Tests and replay
+## Tests
 
 ```sh
-npm test
-npm run test:ui
-npm run backtest -- events.jsonl settings.json
-npm run dist:win
+npm test          # 12 node suites: rpc, chain, smoke, engine modules, market, exits, guards, wallet, settings sharing, Jito, curve, audit
+npm run test:ui   # Electron, hidden window, mock wallet, engine stopped
 ```
 
-The UI smoke test opens a hidden window with an isolated mock wallet and network requests blocked. The live dry-run script is separate and requires a wallet password; it is not part of the test suite.
+Every push runs both on **Windows and Ubuntu** through GitHub Actions. The suite never touches the network, a real
+wallet or real money.
 
-See [backtesting](docs/BACKTESTING.md), [release audit](docs/AUDIT-1.0.1.md), [security](SECURITY.md), [build instructions](docs/BUILD.md) and [settings](docs/SETTINGS.md). Older architecture and settings notes describe earlier behavior; the release audit records changes in 1.0.1.
+## Build your own installers
 
-## Limits
+```sh
+npm run dist:win     # Windows  → dist/PillCrew-Sniper-<version>-win-x64.exe
+npm run dist:mac     # macOS    → dist/PillCrew-Sniper-<version>-mac-<arch>.dmg   (build on a Mac)
+npm run dist:linux   # Linux    → dist/PillCrew-Sniper-<version>-linux-<arch>.{AppImage,deb}
+```
 
-This release does not add Geyser/gRPC, ShredStream, creator-history indexing, wallet clustering or a trained exit model. Those require additional integration, datasets and validation. There is no verified profitability result or latency ranking against competing bots. Recorded-signal replay is not a full historical simulation of live discovery.
+Build each target on its own system; a Mac bundle cannot be produced or signed from Windows or Linux. Code signing and
+notarization are described in **[docs/BUILD.md](docs/BUILD.md)**.
 
-## License
+## Documentation
 
-MIT. See [LICENSE](LICENSE).
+| | |
+| --- | --- |
+| [Install and run](docs/INSTALL.md) | Exact steps and fixes for Windows, macOS and Linux |
+| [Settings reference](docs/SETTINGS.md) | Every number the app has, what it does, and why the percentages are net |
+| [Architecture](docs/ARCHITECTURE.md) | How the engine, feeds and safety layers fit together |
+| [Backtesting](docs/BACKTESTING.md) | Replaying a recorded session |
+| [Build and release](docs/BUILD.md) | Installers, signing, packaging notes |
+| [Changelog](CHANGELOG.md) | What changed, release by release |
+| [Security policy](SECURITY.md) | Trust boundaries, and what the guards do not prove |
+
+## Contributing
+
+Issues and pull requests are welcome — [CONTRIBUTING.md](CONTRIBUTING.md) has the ground rules. A change that can
+spend SOL needs a test that fails without it. Please report vulnerabilities privately through a GitHub security
+advisory rather than in a public issue.
+
+## What this is not
+
+There is no verified profitability figure and no latency ranking against other bots, and a strategy preset is not a
+promise. The app does not index creator history or cluster wallets, does not use Geyser/ShredStream, and its replay is
+not a full historical simulation of live discovery. A stop can gap past its level or find no liquidity. RPCs and
+market services can lag or lie. Use a small, separately funded wallet.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). Built by [PillCrew](https://pillcrew.fun).

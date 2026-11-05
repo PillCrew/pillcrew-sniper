@@ -3,6 +3,21 @@
 All notable changes to this project are recorded here. The format follows Keep a Changelog and the
 project uses semantic versioning.
 
+## [1.0.6] - 2026-11-06
+
+### Documentation
+
+- **A real install guide** — [docs/INSTALL.md](docs/INSTALL.md) walks Windows, macOS and Linux through both the
+  installer and a source checkout, with the exact commands, where the wallet, settings and logs live on each system,
+  how to uninstall and wipe, and a troubleshooting table for the failures people actually hit (SmartScreen, Gatekeeper
+  quarantine, FUSE 2 on Ubuntu 24.04, the Linux SUID sandbox helper, Wayland fractional scaling).
+- **README rewritten** — banner, CI/licence/Node/platform badges, screenshots, a five-step first run, a feature table,
+  the optional keys, the test commands and honest limits, instead of an internal audit note.
+- **Build guide rewritten** — per-OS packaging outputs, a smoke test with a throwaway profile, code signing and
+  notarization for all three platforms, and a release checklist. The Windows installer was built from this tree,
+  installed silently, launched and uninstalled to prove the path end to end.
+- `package.json` now carries `homepage`, `repository` and `bugs`, so the repository card and issue links are right.
+
 ## [1.0.5] - 2026-11-05
 
 ### One press stops starting the bot
