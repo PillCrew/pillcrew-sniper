@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { Store } = require('./src/store');
 const { WalletManager } = require('./src/wallet');
 const { Engine, DEFAULTS, PROFILES, AUTOPILOT } = require('./src/engine');
@@ -49,6 +50,41 @@ const wrap = (fn) => async (_e, ...args) => {
   try { return { ok: true, data: await fn(...args) }; } catch (err) { return { ok: false, error: err.message || String(err) }; }
 };
 
+/**
+ * The desk's own diary, one file a day under `logs/`. Every entry the window shows is also written here, so a session
+ * can be read afterwards - including the one question a window cannot answer once it is closed: "what did it do with
+ * that coin". A write that fails (a full disk, a file locked by a reader) is dropped in silence: the diary is a
+ * convenience, never a reason to stop trading.
+ */
+function openDiary(dir) {
+  const folder = path.join(dir, 'logs');
+  try { fs.mkdirSync(folder, { recursive: true }); } catch (_) { return () => {}; }
+  const stamp = (ms) => new Date(ms).toISOString().replace('T', ' ').replace('Z', '');
+  let day = '';
+  let stream = null;
+  const open = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    if (today === day && stream) return stream;
+    try { if (stream) stream.end(); } catch (_) { /* the old day is done */ }
+    day = today;
+    try {
+      stream = fs.createWriteStream(path.join(folder, `pillcrew-${today}.log`), { flags: 'a' });
+      stream.on('error', () => { stream = null; });
+    } catch (_) { stream = null; }
+    return stream;
+  };
+  const write = (level, scope, msg) => {
+    const s = open();
+    if (!s) return;
+    const line = `${stamp(Date.now())} ${String(level || 'info').toUpperCase().padEnd(5)} [app:${scope}] ${msg}\n`;
+    try { s.write(line); } catch (_) { /* never a reason to stop trading */ }
+  };
+  write('info', 'app', `PillCrew Sniper ${app.getVersion()} starting (${process.platform}/${process.arch})`);
+  return write;
+}
+
+let diary = () => {};
+
 // Replacing or removing the wallet is the one action that can lose money that is still on chain, so it is
 // blocked while the bot is trading and while a real position is open.
 const openLivePositions = () => [...engine.positions.values()].filter((p) => !p.paper).length;
@@ -60,6 +96,7 @@ function guardWalletChange(replace) {
 
 app.whenReady().then(() => {
   const dir = app.getPath('userData');
+  diary = openDiary(dir);
   store = new Store(dir, 'settings.json', DEFAULTS);
   // Settings that no longer exist: the Jupiter route and the price service need no key, and the old market switch
   // was replaced by `wideDiscovery`.
@@ -71,7 +108,12 @@ app.whenReady().then(() => {
   // The open positions travel on their own channel, far more often than the rest of the window: a percentage on
   // screen has to move with the market, not with the slowest panel on the page.
   engine.on('positions', (list) => { if (win && !win.isDestroyed()) win.webContents.send('positions', list); });
-  engine.on('log', (l) => { if (win && !win.isDestroyed()) win.webContents.send('log', l); });
+  engine.on('log', (l) => {
+    if (win && !win.isDestroyed()) win.webContents.send('log', l);
+    // Every line the window shows is also written to disk, so a session can be read after the fact.
+    const scope = l.level === 'buy' || l.level === 'sell' ? 'trade' : 'engine';
+    diary(l.level === 'buy' || l.level === 'sell' ? 'info' : l.level, scope, l.msg);
+  });
 
   const walletInfo = () => ({ exists: wallet.exists(), unlocked: wallet.isUnlocked(), address: wallet.address(), damaged: wallet.damaged || null });
 

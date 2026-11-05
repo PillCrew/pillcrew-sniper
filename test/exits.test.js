@@ -655,6 +655,68 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     assert.ok(e._slippageFor('SPIKE', false, 0) <= 10, 'a take profit keeps the tight ceiling');
   }
 
+  // A price that is not arriving any more must not look like a price. Measured live on 2026-11-05: a coin went from a
+  // 50k market cap to nothing while the position card kept printing +71%, and the owner sold it by hand because the
+  // bot never did. Two separate faults made that possible, and both are held here.
+  {
+    // 1) A FALL is the market and is taken on the first reading, whatever its size. Only a jump UP needs a second
+    // opinion. The old guard refused both, and because the refused reading was never accepted, the old number stayed
+    // for ever: every later reading was "too big a jump" from it too.
+    const e = engine({ takeProfitPct: 500, stopLossPct: 30, trailArmPct: 0, maxHoldSec: 3600, triggerHoldMs: 0 });
+    const p = open(e, 'CRASH');
+    p.mc = 100; p.pxAt = Date.now(); p.pxSource = 'chain';
+    p.extRef = { priceUsd: 1, mc: 100 };
+    p.pxPull = 0.2; p.pxPullAt = Date.now();          // the quote collapsed by 80% in one reading
+    e._pricePosition(p, Date.now());
+    assert.ok(Math.abs(p.mc - 20) < 0.01, `a fall of 80% in one reading is the market and is taken at once, got ${p.mc}`);
+    assert.strictEqual(p.pxSource, 'quote');
+
+    // ...while a jump UP of the same size still has to be seen twice, so one printed price cannot inflate a position.
+    const q = open(e, 'PUMP');
+    q.mc = 100; q.pxAt = Date.now(); q.pxSource = 'chain';
+    q.extRef = { priceUsd: 1, mc: 100 };
+    q.pxPull = 5; q.pxPullAt = Date.now();            // 5x in one reading
+    e._pricePosition(q, Date.now());
+    assert.strictEqual(q.mc, 100, 'a 5x jump is not taken on one reading');
+    q.pxPull = 5; q.pxPullAt = Date.now();            // ...the same value again agrees with itself
+    e._pricePosition(q, Date.now());
+    assert.ok(Math.abs(q.mc - 500) < 1, `two readings that agree become the price, got ${q.mc}`);
+  }
+  {
+    // 2) A position nobody is pricing is SOLD instead of held blind: the last number a feed gave is not what the coin
+    // is worth now, and holding it is how a winner turns into nothing.
+    const e = engine();
+    const p = open(e, 'BLIND');
+    e.history.length = 0;
+    p.paper = false; p.tokIn = 1000n; p.solIn = 0.01; p.feeBuy = 0;
+    let sold = null;
+    e._tradeLive = async () => ({ sig: 'S', raw: null, landed: true });
+    e._tokenBalanceRaw = async () => 0n;
+    e._confirm = async () => ({ state: 'confirmed', err: '' });
+    e._finishSell = (pos, why) => { sold = why; e.positions.delete(pos.mint); };
+    p.pxAt = Date.now() - 120000;                      // two minutes with no reading
+    e._tick();
+    await settle();
+    assert.match(String(sold), /Price lost/, `a position with no price for two minutes is closed, got ${sold}`);
+    assert.ok(!e.positions.has('BLIND'));
+
+    // A position whose price is current is never touched by that watchdog.
+    const e2 = engine();
+    const live = open(e2, 'LIVE');
+    live.paper = false; live.tokIn = 1000n;
+    let asked2 = 0;
+    e2._tradeLive = async () => { asked2++; return { sig: 'S', raw: null, landed: true }; };
+    live.pxAt = Date.now();
+    e2._tick();
+    await settle();
+    assert.strictEqual(asked2, 0, 'a priced position is left to its own rules');
+    assert.ok(e2.positions.has('LIVE'));
+
+    // And the panel says how old the number is, so a still percentage cannot look live.
+    const view = e2._positionsView().find((v) => v.mint === 'LIVE');
+    assert.ok(view && Number.isFinite(view.pxAgeSec), 'the view carries the age of the price');
+  }
+
   fs.rmSync(dir, { recursive: true, force: true });
   console.log('Exits test passed');
   process.exit(0);

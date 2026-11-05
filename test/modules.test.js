@@ -382,7 +382,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   const realFee = e._refreshFee;
   e._refreshFee = () => {};
   const sold = []; e._sell = (p, why) => { sold.push(why); p.status = 'closed'; };
-  const pSim = { mint: 'PTICK', status: 'open', entryMc: 100, mc: 115, peakMc: 130, tp1Done: false, openedAt: Date.now() - 20000, pxAt: 115, trigger: null };
+  const pSim = { mint: 'PTICK', status: 'open', entryMc: 100, mc: 115, peakMc: 130, tp1Done: false, openedAt: Date.now() - 20000, pxAt: Date.now() - 1000, trigger: null };
   e.positions.set('PTICK', pSim);
   e._pnlPct = () => 15; // past tp1 (12), under the target (25): the full desk would bank the first rung
   e._tick();

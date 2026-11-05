@@ -32,6 +32,12 @@ const MAX_TICK_JUMP_PCT = 40;
 // the curve while the stream talks, from the price service while it answers, and from the board when neither does -
 // and a reading that none of the three refreshed inside this window is left alone rather than acted on.
 const PX_STALE_MS = 6000;
+// A position nobody has a price for is a position no rule can protect. After this long the desk asks for that one
+// mint directly instead of waiting for the next sweep to mention it, and after `PX_LOST_MS` it sells: a coin the
+// desk cannot see is a coin it cannot hold. Measured live, a coin that went from a 50k market cap to nothing kept
+// printing +71% for eight minutes, because the last number it had was never replaced.
+const PX_DEAD_MS = 10000;
+const PX_LOST_MS = 45000;
 // How often the bonding curve itself is read for coins whose stream is quiet and whose price service answer is gone.
 // One `getMultipleAccountsInfo` for every coin held, so the cost is a single request, not one per position. A held
 // coin is the one place where a tenth of a second of price is worth a request: a risk rule can only fire on a reading
@@ -959,6 +965,30 @@ class Engine extends EventEmitter {
           }
         }
       }
+      // A position nobody is pricing any more: the price service dropped the mint, the curve graduated into PumpSwap,
+      // or the trade stream for it died. The last number accepted is then the only number the rules can read, and it
+      // can be minutes old - measured live, a coin that went from a 50k market cap to nothing kept the desk at +71%.
+      // So this one mint is asked for directly, and a fresh answer replaces the old quote even though one is on
+      // record. Cheap: it only runs for a coin that has already gone quiet, and at most once every few seconds.
+      if (now - (this._lostAt || 0) > 3000) {
+        this._lostAt = now;
+        const lost = mints.filter((mint) => {
+          const p = this.positions.get(mint);
+          return p && !p.closing && now - (p.pxAt || p.openedAt || now) > PX_DEAD_MS;
+        });
+        if (lost.length) {
+          const rows = await this.market.enrich(lost, true).catch(() => new Map());
+          const at = Date.now();
+          for (const [mint, row] of rows) {
+            const p = this.positions.get(mint);
+            if (!p || p.closing || !row || !(row.priceUsd > 0)) continue;
+            p.pxPull = row.priceUsd;
+            p.pxPullAt = at;
+            this._pricePosition(p, at);
+          }
+          this._lostAt = Date.now();
+        }
+      }
     } catch (_) {
       /* the wide sweep reports its own failures */
     } finally {
@@ -993,13 +1023,23 @@ class Engine extends EventEmitter {
     if (!p.extRef || !(p.extRef.priceUsd > 0)) {
       p.extRef = { priceUsd: px, mc: p.mc };
       p.pxSource = 'quote';
+      // The anchor IS this reading: the price did not move, and that has to count as a fresh look at the coin, or a
+      // position whose first quote arrived late would look unseen and be sold by the watchdog below.
+      p.pxAt = now;
       this._pxDirty = true;
       return;
     }
     const next = p.extRef.mc * (px / p.extRef.priceUsd);
-    // A quote that jumps more than this cannot be believed on its own: the anchor stays where it was and the reading
-    // is only used for the confirmation, never to drag the percentage the rules read.
-    if (p.mc > 0 && Math.abs(next / p.mc - 1) * 100 > MAX_TICK_JUMP_PCT) { p.pxOdd = next; return; }
+    // A FALL is the market and is taken on the first reading, however big it is: the stop has to fire on it. Only a
+    // jump UP needs a second opinion, because a printed price on a thin pool can be one big order rather than a move.
+    // Measured live on 2026-11-05: $Saylor went from a 50k market cap to nothing while the desk kept printing +71%,
+    // because every reading after the crash was refused as "too big a jump" from the last accepted one - and refusing
+    // it kept that old number in place for ever, so the stop, the target and the trail were all reading a ghost.
+    if (p.mc > 0 && next > p.mc && (next / p.mc - 1) * 100 > MAX_TICK_JUMP_PCT) {
+      const prev = p.pxOdd;
+      p.pxOdd = next;
+      if (!(prev > 0 && Math.abs(next / prev - 1) < 0.25)) return;
+    }
     p.mcPrev = p.mc;
     p.mc = next;
     p.pxAt = now;
@@ -1014,6 +1054,10 @@ class Engine extends EventEmitter {
       mint: p.mint, symbol: p.symbol, pnlPct: this._pnlPct(p), mc: p.mc, solIn: p.solIn,
       heldSec: Math.round((now - p.openedAt) / 1000), status: p.status, paper: p.paper,
       pending: Boolean(p.pending), closing: Boolean(p.closing),
+      // How old the price behind the percentage is. A number nobody has refreshed must not look live: the owner
+      // watched a coin go from a 50k market cap to nothing while the card still read +71%, because the reading behind
+      // it had stopped arriving and nothing on screen said so.
+      pxAgeSec: p.pxAt ? Math.round((now - p.pxAt) / 1000) : null,
     }));
   }
 
@@ -1562,6 +1606,10 @@ class Engine extends EventEmitter {
     p.entryMc = px.mc;
     p.mc = px.mc;
     p.peakMc = px.mc;
+    // The entry price is a real reading of the pool, so the position starts with a fresh price clock: without this the
+    // watchdog that sells an unpriceable coin would see a brand-new position as one nobody has ever priced.
+    p.pxAt = Date.now();
+    p.pxSource = px.src === 'curve' ? 'curve' : 'entry';
     this.stats.entryPx[px.src === 'curve' ? 'curve' : 'board']++;
     this.buyTimes.push(now);
     // A coin that was just bought has to be priced at its curve from the first second, not four seconds later when
@@ -2128,6 +2176,18 @@ class Engine extends EventEmitter {
     for (const p of this.positions.values()) {
       if (p.status !== 'open' || p.closing) continue;
       const t = this.tokens.get(p.mint);
+      // A coin the desk cannot price is a coin it cannot protect. The last number a feed gave is not what the coin is
+      // worth now, and every rule - the stop included - would be reading a ghost. Measured live on 2026-11-05: a coin
+      // that went from a 50k market cap to nothing kept printing +71% for eight minutes, and only a hand on the Sell
+      // button ended it. The price feed gets PX_DEAD_MS to answer (the poll asks for that mint directly after that),
+      // and after PX_LOST_MS the position is closed: any price beats no price. A position with no reading at all is
+      // counted from the moment it entered the book, because holding it blind is the same problem either way.
+      const lastPx = p.pxAt || p.openedAt || now;
+      if (now - lastPx > PX_LOST_MS) {
+        p.trigger = null;
+        this._sell(p, 'Price lost', 100);
+        continue;
+      }
       if (p.mc > (p.peakMc || 0)) { p.peakMc = p.mc; p.peakPct = this._pnlPct(p); }
       const pnl = this._pnlPct(p);
       const peak = this._pnlPct({ ...p, mc: p.peakMc || p.mc });

@@ -194,7 +194,7 @@
         const pct = Number(p.pnlPct) || 0;
         const cls = pct >= 0 ? 'pos' : 'neg';
         return h('div', { class: 'row', 'data-mint': p.mint },
-          h('div', {}, h('b', {}, '$' + (p.symbol || '?')), h('small', { 'data-note': '' }, `${sol(p.solIn, 3)} SOL · ${fmtAge(p.heldSec)}${p.paper ? ' · practice' : ''}${p.pending ? ' · confirming…' : ''}`)),
+          h('div', {}, h('b', {}, '$' + (p.symbol || '?')), h('small', { 'data-note': '' }, `${sol(p.solIn, 3)} SOL · ${fmtAge(p.heldSec)}${p.paper ? ' · practice' : ''}${p.pending ? ' · confirming…' : ''}${Number(p.pxAgeSec) >= 6 ? ` · no price ${fmtAge(p.pxAgeSec)}` : ''}`)),
           h('div', { class: cls, 'data-px': '' }, h('b', { class: cls }, (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%')),
           h('button', { class: 'btn small ghost', disabled: p.status !== 'open', onclick: () => {
             call(api.botSell(p.mint)).then(() => toast(`Sold ${p.symbol}.`)).catch((e) => toast(e.message, true));
@@ -232,7 +232,10 @@
       if (b && b.textContent !== text) b.textContent = text;
       if (cell.className !== cls) { cell.className = cls; if (b) b.className = cls; }
       if (note) {
-        const line = `${sol(p.solIn, 3)} SOL · ${fmtAge(p.heldSec)}${p.paper ? ' · practice' : ''}${p.pending ? ' · confirming…' : ''}${p.closing ? ' · selling…' : ''}`;
+        // A price nobody has refreshed is labelled as such, in words: a still percentage on a moving coin is the one
+        // thing that made the owner sell a coin by hand while the card insisted it was up 71%.
+        const stale = Number(p.pxAgeSec) >= 6 ? ` · no price ${fmtAge(p.pxAgeSec)}` : '';
+        const line = `${sol(p.solIn, 3)} SOL · ${fmtAge(p.heldSec)}${p.paper ? ' · practice' : ''}${p.pending ? ' · confirming…' : ''}${p.closing ? ' · selling…' : ''}${stale}`;
         if (note.textContent !== line) note.textContent = line;
       }
     }

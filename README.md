@@ -203,6 +203,19 @@ then **simulates** them on mainnet. Nothing is spent. On an empty wallet every s
 `AccountNotFound`, which is the cluster saying the fee payer does not exist yet: that is the last thing a
 funded wallet fixes.
 
+## Read the session afterwards
+
+Every line the window shows is also written to a diary on your disk, one file per day:
+
+| System | Folder |
+| --- | --- |
+| Windows | `%APPDATA%\PillCrew Sniper\logs\pillcrew-<date>.log` |
+| macOS | `~/Library/Application Support/PillCrew Sniper/logs/` |
+| Linux | `~/.config/PillCrew Sniper/logs/` |
+
+Buys, sells, the rule that fired, the numbers it fired on, refusals with their reason, feed changes and
+errors. Nothing leaves your machine.
+
 
 ## Modes
 
@@ -264,6 +277,11 @@ instead of forgotten.
 An exit that is still in profit is never handed a wide slippage tolerance: it gets 15%, because a 40% order on a
 coin that is +8% may fill at -32% - which is exactly the "it was up and it sold me a loss" report. A losing exit
 keeps the wide tolerance, because any price beats no sale.
+
+**A price that stopped arriving is treated as a price that stopped arriving.** A fall is taken on the first reading,
+however big; a jump up still has to be seen twice. A position nobody is pricing is asked for directly after ten
+seconds and sold after forty-five (`Price lost`), because a coin the desk cannot see is a coin it cannot protect, and
+the card names the age of its number (`· no price 12s`) so a still percentage can never look live.
 
 Every sale then sells the leftover, closes the coin's token account and returns its ~0.00204 SOL of rent.
 

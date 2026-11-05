@@ -7,6 +7,28 @@ project uses semantic versioning.
 
 The first public release.
 
+### A price nobody refreshed is not a price, and a fall is never held back
+
+- **A fall is taken on the first reading, whatever its size; only a jump UP needs a second opinion.** The guard in the
+  quote path refused any move bigger than 40% - in both directions - and, because a refused reading never replaced the
+  number it was measured against, the position froze at its last accepted price **for ever**: every later reading was
+  "too big a jump" from that same ghost. Measured live on 2026-11-05: **$Saylor** went from a 50k market cap to
+  nothing while the desk kept printing +71%, and the sale that ended it was a hand on the Sell button. With the number
+  frozen, the stop could not fire, the target could not confirm (a signal has to be seen on a *fresh* price) and the
+  time limit was the only thing left.
+- **A position nobody is pricing is now asked about directly and, failing that, sold.** After ten seconds without a
+  reading the engine asks the market for that one mint by itself, and the fresh answer replaces the old quote even
+  though one is on record. After forty-five seconds it sells (`Price lost`): a coin the desk cannot see is a coin it
+  cannot protect, and holding it blind is exactly how a winner becomes nothing.
+- **The card says how old its number is** (`· no price 12s`), so a still percentage can never again look live.
+- The entry price now stamps the price clock, so a brand-new position is never mistaken for one nobody has priced.
+
+### The desk keeps a diary
+
+- **Every line the window shows is also written to `logs/pillcrew-<date>.log`**, one file per day: buys, sells, the
+  rule that fired, refusals, feed changes and errors. The build before this one kept its log in memory only, so a
+  session could not be read after the fact - which is the first thing anyone asks when a trade looks wrong.
+
 ### Simple settings and the buyer ceiling
 
 - **A new switch in Quick setup turns the desk simple.** While it is on, the settings form shows only the
