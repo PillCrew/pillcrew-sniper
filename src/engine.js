@@ -931,8 +931,8 @@ class Engine extends EventEmitter {
             // reading is almost always two numbers from two sources rather than a market move. Such a jump has to be
             // seen twice, on two readings that agree, before it becomes the price.
             if (p.mc > 0 && c.mcSol > p.mc * CURVE_JUMP_UP) {
-              const prev = p.pxOdd;
-              p.pxOdd = c.mcSol;
+              const prev = p.pxOddCurve;
+              p.pxOddCurve = c.mcSol;
               if (!(prev > 0 && Math.abs(c.mcSol / prev - 1) < 0.25)) continue;
             }
             p.mcPrev = p.mc;
@@ -1036,8 +1036,10 @@ class Engine extends EventEmitter {
     // because every reading after the crash was refused as "too big a jump" from the last accepted one - and refusing
     // it kept that old number in place for ever, so the stop, the target and the trail were all reading a ghost.
     if (p.mc > 0 && next > p.mc && (next / p.mc - 1) * 100 > MAX_TICK_JUMP_PCT) {
-      const prev = p.pxOdd;
-      p.pxOdd = next;
+      // A separate slot from the curve's: a quote and a curve reading are two different pools, so one cannot be the
+      // second opinion the other needs.
+      const prev = p.pxOddQuote;
+      p.pxOddQuote = next;
       if (!(prev > 0 && Math.abs(next / prev - 1) < 0.25)) return;
     }
     p.mcPrev = p.mc;
@@ -1748,6 +1750,14 @@ class Engine extends EventEmitter {
     p.closing = true;
     const s = this.s;
     const t1 = Date.now();
+    // A sale that did not come from a trigger has no "move that fired the rule": a press of Sell, Sell all, or the
+    // price being lost are about the coin *now*. Without this the line read "(Manual sell at +0.0%)" - because a
+    // missing number compares as zero - and an estimate could be booked at the price of a trigger that had already
+    // been abandoned. So the numbers describe this sale, not an older one.
+    if (opts.manual || why === 'Price lost' || why === 'Sell all') {
+      p.firedAt = Math.round(this._pnlPct(p) * 10) / 10;
+      p.mcAtFire = p.mc;
+    }
     const part = Math.max(1, Math.min(100, Number(pct) || 100));
     const urgent = why !== 'Take profit' && why !== 'Take profit part 1';
     const feeSell = this._feeFor(urgent);
@@ -1789,9 +1799,13 @@ class Engine extends EventEmitter {
             p.closing = false;
             p.nextTry = Date.now() + 150;
             p.trigger = null;
-            this._log('info', `${p.symbol}: ${why} was about to sell a risk that is no longer there - ${gone}. Not selling it; watching again.`);
-            return;
-          }
+                // The fire is gone with the trigger: leaving it behind would let the next sale print - or book - the move
+                // of an exit that never happened.
+                p.firedAt = null;
+                p.mcAtFire = null;
+                this._log('info', `${p.symbol}: ${why} was about to sell a risk that is no longer there - ${gone}. Not selling it; watching again.`);
+                return;
+              }
         }
         const order = (slippage, via) => (via === 'backup'
           ? this._backupTrade('sell', p.mint, null, { slippage, pct: part })
@@ -1882,6 +1896,15 @@ class Engine extends EventEmitter {
           if (soldPct != null && soldPct >= 0.5) { this._finishSell(p, why, feeSell, soldPct); return; }
         } catch (_) { /* unknown */ }
       }
+      // The two doors are asked at once, so a failure arrives as an AggregateError whose message is the useless
+      // "All promises were rejected". The reason a person reads is the one the chain gave.
+      const real = (e) => {
+        if (e && e.errors && e.errors.length) {
+          const first = e.errors.find((x) => x && !x.noFee) || e.errors[0];
+          if (first) return first;
+        }
+        return e;
+      };
       p.closing = false;
       p.fails++;
       // An exit never waits long: a refused order costs one fee, while a position that could not be closed for
@@ -1893,7 +1916,8 @@ class Engine extends EventEmitter {
         if (opts.manual) throw e;
         return;
       }
-      this._log(p.fails >= 5 ? 'error' : 'warn', `${p.symbol} has not sold yet: ${e.message}. Retrying${p.fails >= 5 ? ' - if this keeps up, close it from the Wallet tab with Sell every coin' : ''}.`);
+      const reason = real(e);
+      this._log(p.fails >= 5 ? 'error' : 'warn', `${p.symbol} has not sold yet: ${reason.message || 'the chain refused it'}. Retrying${p.fails >= 5 ? ' - if this keeps up, close it from the Wallet tab with Sell every coin' : ''}.`);
     }
   }
 

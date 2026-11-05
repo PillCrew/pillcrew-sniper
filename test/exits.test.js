@@ -717,6 +717,42 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     assert.ok(view && Number.isFinite(view.pxAgeSec), 'the view carries the age of the price');
   }
 
+  // A sale that did not come from a trigger still has to say what the coin was doing at that moment. A missing
+  // `firedAt` compares as zero in JavaScript, so every manual sale printed "(Manual sell at +0.0%)" - a lie on the
+  // one line the owner reads after pressing the button himself.
+  {
+    const logs = [];
+    const e = engine();
+    e._log = (lvl, msg) => logs.push(msg);
+    const p = open(e, 'MANUAL');
+    p.paper = true;
+    p.mc = at(35);                                  // the coin is up 35% at the moment of the press
+    p.tokIn = 1000n;
+    await e._sell(p, 'Manual sell', 100, { manual: true });
+    const line = logs.find((l) => /Manual sell/.test(l)) || '';
+    assert.match(line, /Manual sell at \+3[0-9]/, `the line names the move that was sold, got: ${line}`);
+  }
+
+  // The two confirmation slots are separate: a curve reading and an aggregator quote are different pools, so one
+  // must never be the second opinion the other needs. Here the curve's slot already holds the very number the quote
+  // is about to print - the old shared slot would call that "two readings that agree" and take it.
+  {
+    const e = engine();
+    const p = open(e, 'SLOTS');
+    p.mc = 100; p.pxAt = Date.now(); p.pxSource = 'chain';
+    // The curve refused this very number a moment ago, so it sits in the curve's slot. While the two shared one slot,
+    // the quote below would find it there, call it "two readings that agree" and take a 3x on a single print.
+    p.pxOdd = 300;
+    p.pxOddCurve = 300;
+    p.extRef = { priceUsd: 1, mc: 100 };
+    p.pxPull = 3; p.pxPullAt = Date.now();          // the quote says 3x
+    e._pricePosition(p, Date.now());
+    assert.strictEqual(p.mc, 100, 'a curve number is not confirmation for a quote from another pool');
+    p.pxPull = 3; p.pxPullAt = Date.now();          // ...the quote agrees with itself
+    e._pricePosition(p, Date.now());
+    assert.ok(Math.abs(p.mc - 300) < 1, `two quote readings that agree become the price, got ${p.mc}`);
+  }
+
   fs.rmSync(dir, { recursive: true, force: true });
   console.log('Exits test passed');
   process.exit(0);
