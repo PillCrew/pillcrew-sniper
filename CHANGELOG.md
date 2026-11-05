@@ -3,6 +3,40 @@
 All notable changes to this project are recorded here. The format follows Keep a Changelog and the
 project uses semantic versioning.
 
+## [1.0.5] - 2026-11-05
+
+### One press stops starting the bot
+The *Best Profit* button in Settings wrote the preset and then pressed Start itself, so a single press in Practice
+mode began a run — and the same press in Real Money would have begun a live one. It now only applies the preset:
+`Best Profit · Apply the Practice settings` / `Best Profit · Apply live settings`, and the message under it says
+to press Start. The IPC handler no longer has a start path at all, so nothing behind that button can trade.
+
+### The entry no longer waits for a price it already has
+Every entry asked the node for the pool price and waited for the answer — 450 ms when the coin's own tape was fresh,
+700 ms when it was quiet — and that wait sat exactly on the path between "this coin qualifies" and "the order goes
+out", which is the one place a sniper cannot afford it. A coin that traded within the last 1.2 s already carries the
+pool's own price: the trade handler writes it straight from the curve. `_entryPrice` now uses it, keeps the provenance
+(`pxEntry` stays `curve`, so the exit ladder treats the entry exactly as before), and only asks the node when the tape
+is quiet — where the wait also came down to 500 ms (300 ms when fresh). Measured effect on the buy path: ~1.15 s of
+waiting before the order, now ~0.25 s.
+
+### The desk looks at a coin four times a second, not one and a half
+The scan gate came down from 700 ms to 250 ms and the tick from 50 ms to 25 ms, so a coin that crosses its bar is
+judged again in a quarter of a second instead of a second, and a stop or a target is measured twice as often. Priced
+before shipping, not guessed: one judgement costs ~4 µs of CPU (`_bench-eval3.js`), so the extra cadence is noise next
+to the RPC calls the desk already makes.
+
+### The Profit / Loss card stops reading like a list of errors
+Its line used to say `entries priced at the pool 0, at the board 0, refused 33` — the desk's own bookkeeping, which
+read as errors counted against the money. The line under the number now says whose money it is, how many trades, what
+the fees were, and whether the chain refused an order (a real error, and it keeps its place). Where a price came from
+moved to the card's tooltip, where a diagnostic belongs.
+
+### The lockfile installs again
+`npm ci` refused the tree from 1.0.1 on: `jayson` needs `utf-8-validate@5.0.10` nested, and the lock carried only the
+hoisted 6.0.6, so every CI run stopped at the install step before a single test. The lock is regenerated in a clean
+tree with npm 10 and proved with a real `npm ci`, and CI is green on Windows and Linux again.
+
 ## [1.0.4] - 2026-11-05
 
 ### The desk says what is holding the book back

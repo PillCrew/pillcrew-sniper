@@ -17,14 +17,19 @@ app.whenReady().then(async () => {
   const store = { get: () => settings, set: (patch) => Object.assign(settings, patch) };
   const wallet = { exists: () => false, address: () => null, isUnlocked: () => false };
   const engine = new Engine(wallet, store);
+  const calls = { autopilotArgs: 'never called', botStart: 0 };
   for (const [name, handler] of Object.entries({
     'settings:get': () => settings,
     'wallet:status': () => ({ exists: false, unlocked: false, address: null }),
     'settings:share': () => ({ code: Share.encode(settings), text: Share.describe(settings) }),
+    // RULE ADDED 2026-11-05 (1.0.4): the owner's "BEST PROFIT setting ma tylko ustawienia ustawiać a nie startować bota".
+    // The button must write settings and nothing else, so both channels are recorded and checked below.
+    'settings:autopilot': (...args) => { calls.autopilotArgs = args; return settings; },
+    'bot:start': () => { calls.botStart += 1; return { ok: true }; },
   })) {
-    ipcMain.handle(name, (event) => {
+    ipcMain.handle(name, (event, ...args) => {
       assert.ok(trustedSender(event, win, entry), 'real preload IPC passes the main-frame check');
-      return { ok: true, data: handler() };
+      return { ok: true, data: handler(...args) };
     });
   }
   const errors = [];
@@ -42,6 +47,16 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript('document.querySelector("#nav [data-tab=settings]").click()');
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.ok(await win.webContents.executeJavaScript('document.querySelector("#tab-settings").classList.contains("active")'));
+  // One press of Best Profit writes the preset and stops there: no arguments on the channel that could ask for a start,
+  // no call to the start channel at all, and the button says what it does.
+  assert.ok(await win.webContents.executeJavaScript('document.querySelector("#autopilotBtn span").textContent.includes("Apply")'),
+    'the button promises to apply settings, not to start a scan');
+  await win.webContents.executeJavaScript('document.querySelector("#autopilotBtn").click()');
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.deepEqual(calls.autopilotArgs, [], 'the preset channel is called with no start request');
+  assert.equal(calls.botStart, 0, 'pressing Best Profit never starts the bot');
+  assert.ok(await win.webContents.executeJavaScript('(document.querySelector("#autopilotMsg").textContent || "").includes("Press Start")'),
+    'and the message says the run has to be started by hand');
   assert.deepEqual(errors, []);
   clearTimeout(timer);
   console.log('Electron UI smoke test passed (hidden window, isolated mock wallet, trading stopped)');

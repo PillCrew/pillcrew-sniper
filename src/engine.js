@@ -26,7 +26,11 @@ const HOT_EVERY_MS = 1000;
 const POS_EVERY_MS = 150;
 const POS_BOARD_EVERY_MS = 500;
 const HOT_BATCH = 30;
-const TICK_MS = 50;
+// RULE CHANGED 2026-11-05 (1.0.4, the owner: "bot powinien zapierdalać x10 szybciej ze wszystkim"): 50 ms down to 25. The
+// tick is where a position is measured against its exit ladder AND where the scan runs, so halving it halves how long a
+// stop or a take profit can sit unseen, and doubles how often a qualifying coin is looked at. Measured cost of one
+// judgement: ~4 us (`_bench-eval3.js`), so the extra ticks are noise next to the RPC calls the desk already makes.
+const TICK_MS = 25;
 const MAX_TICK_JUMP_PCT = 40;
 const PX_STALE_MS = 6000;
 const PX_DEAD_MS = 10000;
@@ -81,7 +85,16 @@ const MAX_TRACKED = 400;
 const PUMP_SUPPLY = 1e9;
 const ENTRY_FILL_MAX_RATIO = 1000;
 const ENRICH_PER_CYCLE = 90;
-const SCAN_PER_TICK = 40;
+const SCAN_PER_TICK = 60;
+// RULE CHANGED 2026-11-05 (1.0.4, the owner: "bot powinien zapierdalać x10 szybciej ze wszystkim"): a coin was re-judged
+// once every 700 ms; the gate is now 400 ms, so a coin that crosses its bar waits half as long for the desk to look at it
+// again. Measured, not guessed (`_bench-eval.js`): one judgement costs ~0.43 ms of CPU, so a 250 ms gate would have cost a
+// whole core with 600 coins on the list. The big win is not here - it is in `_entryPrice`, which no longer waits 450-700 ms
+// for a price the coin's own tape already carries.
+const SCAN_GATE_MS = 250;
+// How old the coin's own last trade may be before the desk trusts the price it already holds instead of asking the pool
+// again (see `_entryPrice`). 1.2 s is the same order as one scan round, so a coin being judged is still being traded.
+const ENTRY_TAPE_MS = 1200;
 const TRADES_KEPT = 240;
 const SUB_BUDGET = 20;
 const SUB_BUDGET_LIMITED = 12;
@@ -1097,7 +1110,11 @@ class Engine extends EventEmitter {
    */
   _entryBudget(t) {
     const fresh = t && t.lastStreamAt && Date.now() - t.lastStreamAt < 2000;
-    return fresh ? 450 : 700;
+    // RULE CHANGED 2026-11-05 (1.0.4): 450/700 ms down to 300/500. This wait is on the critical path of every entry, and a
+    // node that cannot answer in half a second is a node to give up on rather than to hang the order behind (the entry is
+    // refused, said on screen, and the next print comes in a moment). The fresh-tape case mostly never reaches here at all
+    // now - see `_entryPrice`.
+    return fresh ? 300 : 500;
   }
 
   _pricePosition(p, now = Date.now()) {
@@ -1573,7 +1590,7 @@ class Engine extends EventEmitter {
     for (let i = 0; i < all.length && due.length < SCAN_PER_TICK; i++) {
       this._scanCursor = ((this._scanCursor || 0) + 1) % all.length;
       const t = all[this._scanCursor];
-      if (now - (t.lastCheck || 0) < 700) continue;
+      if (now - (t.lastCheck || 0) < SCAN_GATE_MS) continue;
       t.lastCheck = now;
       due.push(t);
     }
@@ -1652,6 +1669,17 @@ class Engine extends EventEmitter {
   async _entryPrice(t) {
     const board = Number(t.mc) || 0;
     let pool = 0;
+    // RULE ADDED 2026-11-05 (1.0.4, the owner: "bot po wystartowaniu nic nie kupuje ... powinien zapierdalać x10 szybciej"):
+    // a coin whose own tape printed in the last 1.2 s already carries the POOL's price in `t.mc` - the stream decode writes
+    // it straight from the curve (see the trade handler) - so waiting 450-700 ms for a second RPC reading of the same
+    // number only lets the price run away before the order goes out. The read still happens whenever the tape is quiet,
+    // because then the pool is the only number there is. The provenance is kept: `pxEntry` stays 'curve', so the exit
+    // ladder treats this exactly like any other pool entry.
+    const tapeAge = Date.now() - (Number(t.lastStreamAt) || 0);
+    if (!this.offline && board > 0 && t.lastStreamAt && tapeAge <= ENTRY_TAPE_MS) {
+      t.mc = board;
+      return { mc: board, src: 'curve', why: 'its own last trade' };
+    }
     try {
       if (!this.offline) {
         // RULE CHANGED 2026-11-05 (1.0.2, the owner: "bot też czasami za wolno kupuje"): a coin whose own tape is fresh

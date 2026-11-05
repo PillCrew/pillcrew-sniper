@@ -56,6 +56,21 @@ window, are never logged, and are **never** included in a shared settings code.
 | `maxTokenAgeSec` | 0 (off) | Do not buy a coin older than this. The whole-life version of the five minute ceiling: past it the move has happened |
 | `maxRoundTripPct` | 20 | Refuse any ticket whose round trip (both fees plus both tips) costs more than this share of it. **5% is the floor**: at 0.001 SOL the two tips alone are 40% of the ticket, and a desk with no gate loses the ticket to its own fees |
 
+### How fast a coin is looked at, and where the waiting went
+
+Three numbers decide how quickly the desk reacts, and none of them is a setting — they are the shape of the engine:
+
+| What | Value | Why that number |
+| --- | --- | --- |
+| Scan gate | 250 ms | A coin is re-judged four times a second. One judgement costs about 4 µs of CPU, so a full list of three hundred coins costs under half a percent of one core |
+| Tick | 25 ms | The exit ladder is measured against the price forty times a second, so a stop or a target cannot sit unseen between two ticks |
+| Entry price from the tape | 1.2 s | A coin that traded within this window already carries the pool's own price (`pxEntry` stays `curve`). Only a quiet coin waits for a node read, and that read is capped at 500 ms |
+
+The point of the last row is what it removes: the entry used to wait 450–700 ms for a second copy of a number it was
+already holding, exactly between "this coin qualifies" and "the order goes out". A fresh coin now reaches the order in
+roughly a quarter of a second instead of more than a second. The provenance is unchanged, so a fall is still taken at
+once only when the entry came from the pool — a price from a market row never gets that treatment.
+
 ## Styles
 
 A style sets a whole plan at once. Choosing a style overwrites the current values.
@@ -150,9 +165,10 @@ a moment for.
 
 ## One press preset
 
-The Settings screen has a single button that applies a tuned set of numbers. It is meant for a small wallet
-on a busy chain, and every value it writes can still be edited by hand afterwards. It applies the **same
-plan the app ships with** (the `balanced` style with the simple mode on), so a press of the button and a
+The Settings screen has a single button that applies a tuned set of numbers. It **only writes settings** — it never
+starts the bot, in Practice or in Real Money (one press that both filled in a plan and began trading was a trap, and
+it is gone). Press Start when you are ready. Every value it writes can still be edited by hand afterwards. It applies
+the **same plan the app ships with** (the `balanced` style with the simple mode on), so a press of the button and a
 fresh install cannot disagree.
 
 | Key | Value | Why |

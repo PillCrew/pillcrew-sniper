@@ -1035,9 +1035,11 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(sold, 1, 'a stop fires on whatever reading it has');
 
     // The entry read is shorter when the coin's own tape is fresh: the pool's number is only confirmation then.
-    const budget = stale._entryBudget({ lastStreamAt: Date.now() });
-    assert.strictEqual(budget, 450, 'a fresh stream means a 450 ms read');
-    assert.strictEqual(stale._entryBudget({ lastStreamAt: Date.now() - 9000 }), 700, 'a quiet coin gets the full wait');
+    // RULE CHANGED 2026-11-05 (1.0.4, the owner: "bot powinien zapierdalać x10 szybciej ze wszystkim"): the budgets came down
+    // from 450/700 ms to 300/500 ms, and a coin with a fresh tape no longer reaches this read at all (`_entryPrice` prices it
+    // from the trade it just printed). The rule itself is unchanged: a fresh tape gets the short wait, a quiet coin the long one.
+    assert.strictEqual(stale._entryBudget({ lastStreamAt: Date.now() }), 300, 'a fresh stream means a 300 ms read');
+    assert.strictEqual(stale._entryBudget({ lastStreamAt: Date.now() - 9000 }), 500, 'a quiet coin gets the full wait');
   }
 
   // RULE ADDED: the simple plan keeps ONE protective rule. It has no trail of its own, and a coin that peaked at

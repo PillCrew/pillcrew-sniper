@@ -241,16 +241,14 @@ app.whenReady().then(() => {
     if (!Object.prototype.hasOwnProperty.call(PROFILES, name)) throw new Error('Unknown profile');
     return store.set({ profile: name, ...PROFILES[name] });
   }));
-  ipcMain.handle('settings:autopilot', wrap(async (startPractice) => {
+  // RULE CHANGED 2026-11-05 (1.0.4, the owner: "BEST PROFIT setting ma tylko ustawienia ustawiać a nie startować bota"):
+  // this handler wrote the preset and then pressed Start itself, so one press in Practice mode began trading. A settings
+  // button that starts a bot is a trap - the same press in Real Money would have moved real money - so the start is gone
+  // and the argument is ignored on purpose.
+  ipcMain.handle('settings:autopilot', wrap(async () => {
     if (engine.running) throw new Error('Stop the bot first, then apply the preset.');
-    if (startPractice === true && store.get().mode !== 'paper') throw new Error('Switch to Practice before starting the scanner.');
     const cap = Math.min(store.get().sessionLossLimitSol, AUTOPILOT.sessionLossLimitSol);
-    const settings = store.set({ ...AUTOPILOT, marketScan: true, wideDiscovery: true, sessionLossLimitSol: cap });
-    if (startPractice === true) {
-      const result = await engine.start();
-      if (!result.ok) throw new Error(result.error);
-    }
-    return settings;
+    return store.set({ ...AUTOPILOT, marketScan: true, wideDiscovery: true, sessionLossLimitSol: cap });
   }));
   ipcMain.handle('stats:reset', wrap(async (mode) => engine.resetStats(mode)));
 

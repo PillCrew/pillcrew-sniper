@@ -177,6 +177,23 @@ const LAUNCH_VSOL = 30000000000n;
     p = await e._entryPrice(old);
     e.offline = false;
     assert.match(String(p.refuse), /No fresh price/, 'a row nobody refreshed in a minute is not a price');
+
+    // RULE ADDED 2026-11-05 (1.0.4, the owner: "bot powinien zapierdalać x10 szybciej ze wszystkim"): a coin whose own tape
+    // printed within the last 1.2 s already carries the POOL's price (`t.mc` is written straight from the curve by the trade
+    // handler), so the entry does not wait 300-500 ms for an RPC read of the same number. Proven by making the read throw:
+    // a fresh coin is still priced, a quiet one is not.
+    const fresh = { mint, symbol: 'F', mc: 42, mcHist: [], trades: [], status: 'watching', lastActivity: Date.now(), lastStreamAt: Date.now() };
+    let asked = 0;
+    e.rpcCall = async () => { asked++; throw new Error('no node'); };
+    p = await e._entryPrice(fresh);
+    assert.ok(!p.refuse, 'a coin that just traded is priced without asking the pool again');
+    assert.strictEqual(p.mc, 42, 'and at the price its own trade printed');
+    assert.strictEqual(p.src, 'curve', 'a stream price IS a pool price, so the exit ladder keeps treating it as one');
+    assert.strictEqual(asked, 0, 'nothing was asked of the node');
+    const quiet = { ...fresh, lastStreamAt: Date.now() - 5000 };
+    p = await e._entryPrice(quiet);
+    assert.strictEqual(asked, 1, 'a quiet coin still gets the pool read');
+    assert.ok(p.refuse, 'and with no node to answer it is refused rather than bought blind');
   }
 
   // A FINISHED curve is a fossil, not a price. Measured in a paper run on the live market: two coins were entered at a

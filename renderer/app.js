@@ -159,12 +159,16 @@
       const fees = Number(s.stats.feeSpentSol || 0);
       const fails = Number(s.stats.orderFails || 0);
       const epx = s.stats.entryPx || {};
-      const pxNote = Number(epx.curve || 0) + Number(epx.board || 0) + Number(epx.refused || 0) > 0
-        ? ` · entries priced at the pool ${Number(epx.curve || 0)}, at the board ${Number(epx.board || 0)}, refused ${Number(epx.refused || 0)}`
-        : '';
+      const closed = Number(s.stats.wins || 0) + Number(s.stats.losses || 0);
+      // RULE CHANGED 2026-11-05 (1.0.4, the owner: "REALISE P/L ma jakiś błąd, refuse i nalicza itp"): the card printed the
+      // desk's own bookkeeping - "entries priced at the pool 0, at the board 0, refused 33" - and read as a list of errors
+      // counted against his money. Where a price came from is a diagnostic, so it moves to the tooltip; the line under the
+      // number now says only what a trader reads: whose money, how many trades, what the fees were, and whether the chain
+      // refused an order (that one is a real error and keeps its place).
       sub.textContent = liveMode
-        ? `SOL · ${hasDelta ? 'since Start' : 'closed trades'}${fees ? ` · fees ${sol(fees, 4)}` : ''}${fails ? ` · ${fails} refused` : ''}${pxNote}`
-        : `SOL · practice${pxNote}`;
+        ? `SOL · ${hasDelta ? 'since Start' : 'closed trades'}${closed ? ` · ${closed} trades` : ''}${fees ? ` · fees ${sol(fees, 4)}` : ''}${fails ? ` · ${fails} order${fails === 1 ? '' : 's'} refused by the chain` : ''}`
+        : `SOL · practice${closed ? ` · ${closed} trades` : ' · no trades yet'}`;
+      sub.title = `Entry prices: ${Number(epx.curve || 0)} from the pool's own tape, ${Number(epx.board || 0)} from a market row, ${Number(epx.refused || 0)} refused before an order went out.`;
     }
     const closed = s.stats.wins + s.stats.losses;
     $('#sWin').textContent = closed ? Math.round((s.stats.wins / closed) * 100) + '%' : '–';
@@ -794,7 +798,7 @@
   ];
   function renderSettings() {
     if (!settings) return;
-    $('#autopilotBtn span').textContent = settings.mode === 'paper' ? 'Best Profit · Start Practice scan' : 'Best Profit · Apply live settings';
+    $('#autopilotBtn span').textContent = settings.mode === 'paper' ? 'Best Profit · Apply the Practice settings' : 'Best Profit · Apply live settings';
     $$('#profiles .profile').forEach((p) => p.classList.toggle('active', p.dataset.profile === settings.profile));
     const form = clear($('#settingsForm'));
     // Simple mode: only the basic numbers are shown, and the advanced ones stop deciding. The hidden values stay in
@@ -928,15 +932,15 @@
       toast('Real money statistics cleared.');
     }
   });
+  // RULE CHANGED 2026-11-05 (1.0.4): the press applies the preset and stops there. Practice mode no longer starts a run
+  // from a settings button (the owner: "ma tylko ustawienia ustawiać a nie startować bota"), and the message says so.
   $('#autopilotBtn').addEventListener('click', async () => {
     try {
       const btn = $('#autopilotBtn');
       btn.disabled = true;
-      const startPractice = settings.mode === 'paper';
-      settings = await call(api.autopilot(startPractice));
+      settings = await call(api.autopilot());
       renderSettings();
-      $('#autopilotMsg').textContent = startPractice ? 'Practice scanner started.' : 'Preset applied. Use Start Bot to begin live trading.';
-      if (startPractice) showTab('feed');
+      $('#autopilotMsg').textContent = 'Preset applied. Press Start Bot when you are ready.';
       toast($('#autopilotMsg').textContent);
     } catch (e) {
       toast(e.message, true);
