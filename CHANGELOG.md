@@ -18,7 +18,8 @@ out", which is the one place a sniper cannot afford it. A coin that traded withi
 pool's own price: the trade handler writes it straight from the curve. `_entryPrice` now uses it, keeps the provenance
 (`pxEntry` stays `curve`, so the exit ladder treats the entry exactly as before), and only asks the node when the tape
 is quiet — where the wait also came down to 500 ms (300 ms when fresh). Measured effect on the buy path: ~1.15 s of
-waiting before the order, now ~0.25 s.
+waiting before the order, now ~0.25 s. The buy line says which price it used (`priced from its own last trade`), so
+the fast path can be seen working instead of assumed.
 
 ### The desk looks at a coin four times a second, not one and a half
 The scan gate came down from 700 ms to 250 ms and the tick from 50 ms to 25 ms, so a coin that crosses its bar is

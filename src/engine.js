@@ -1867,7 +1867,7 @@ class Engine extends EventEmitter {
       + `${s.simpleMode ? ', simple plan' : `, score ${ev.score}`}`
       // A board price is the risky one: it is somebody else's row, and the pool is the market. Naming it costs one
       // word and answers "why did it stop out at once" without anybody having to read the log of a coin that is gone.
-      + `${px.src === 'board' ? `, board price (${px.why || 'no pool'})` : ''}`
+      + `${px.src === 'board' ? `, board price (${px.why || 'no pool'})` : px.why ? `, priced from ${px.why}` : ''}`
       // A slow price is named on the buy line: over 900 ms the entry waited for the pool, and that wait is the one
       // thing in the path that can be shortened (see `_entryBudget`).
       + `${priceMs > 900 ? ` · pool price took ${priceMs} ms` : ''}`);
