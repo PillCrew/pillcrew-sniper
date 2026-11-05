@@ -183,6 +183,49 @@ const tokenOp = (tag) => new TransactionInstruction({
   assert.strictEqual(store.get().openPositions.length, 1, 'the file matches the book after the restore');
 
   fs.rmSync(dir, { recursive: true, force: true });
+  // RULE ADDED 2026-11-05: Profit / Loss must not invent money. Two ways it did, both measured on the owner's wallet:
+  // coins already held at Start were added to the equity but not to the baseline (three restored tickets plus their
+  // rent read as +0.035 SOL of profit the second the bot started), and a deposit read as profit because the wallet is
+  // one of the two numbers in the subtraction.
+  {
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pcs-pnl-'));
+    const wallet2 = { exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: null };
+    const store2 = new Store(dir2, 's.json', DEFAULTS);
+    store2.set({ mode: 'live', buyAmountSol: 0.01 });
+    const en = new Engine(wallet2, store2);
+    clearInterval(en._bal); clearInterval(en._ui);
+    en.rpcCall = async () => 50_000_000;                       // 0.05 SOL in the wallet
+    en.walletBalance = 0.05;
+    // A coin already held when the session starts: bought in an earlier session, so its tokens were in the wallet then.
+    en.positions.set('HELD', { mint: 'HELD', symbol: 'HELD', entryMc: 100, mc: 100, solIn: 0.01, paper: false, status: 'open' });
+    en._markSession();
+    const view = () => en._walletDelta();
+    assert.ok(Math.abs(view()) < 1e-9, `a position held at Start is not profit, got ${view()}`);
+    // It moves only when the coin moves.
+    en.positions.get('HELD').mc = 130;
+    assert.ok(view() > 0.0025 && view() < 0.0035, `a +30% coin is its own profit, got ${view()}`);
+    // ...and an unpriced coin is marked at what was paid, never at zero.
+    en.positions.get('HELD').mc = 0;
+    assert.ok(Math.abs(view()) < 1e-9, `a coin with no reading yet is not a total loss, got ${view()}`);
+    en.positions.get('HELD').mc = 100;
+
+    // A deposit is not profit either: 0.05 SOL arrives while nothing is being sold.
+    en.wallet.address = () => Keypair.generate().publicKey.toBase58();
+    let bal = 0.05;
+    en.walletBalance = 0.05;
+    en.rpcCall = async () => Math.round(bal * 1e9);
+    bal = 0.10;
+    en._lastSettleAt = 0; en._lastReclaimAt = 0; en._spends = [];
+    await en.refreshBalance();
+    assert.ok(Math.abs(view()) < 1e-9, `a deposit is not profit, got ${view()}`);
+    // ...and a sale landing right after a sale is NOT treated as a deposit.
+    bal = 0.13;
+    en._lastSettleAt = Date.now();
+    await en.refreshBalance();
+    assert.ok(view() > 0.02, `a sale that just landed stays profit, got ${view()}`);
+    fs.rmSync(dir2, { recursive: true, force: true });
+  }
+
   console.log('Guards test passed');
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

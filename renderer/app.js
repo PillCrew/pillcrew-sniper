@@ -135,7 +135,13 @@
     if (pauseNote) {
       if (s.paused) {
         pauseNote.hidden = false;
-        pauseNote.textContent = `New entries paused until ${new Date(s.paused.until).toLocaleTimeString()} (${s.paused.reason}). Open positions still close normally.`;
+        // The sentence used to be the whole note, so the only way out of a pause was to wait it out - and the owner
+        // asked for a button beside the message. The text lives in its own span now, and the button is untouched by
+        // every repaint, so it cannot be swallowed mid-click.
+        const text = document.getElementById('pauseText');
+        const until = new Date(s.paused.until).toLocaleTimeString();
+        if (text) text.textContent = `New entries paused until ${until} (${s.paused.reason}). Open positions still close normally.`;
+        else pauseNote.textContent = `New entries paused until ${until} (${s.paused.reason}). Open positions still close normally.`;
       } else {
         pauseNote.hidden = true;
       }
@@ -145,7 +151,11 @@
     // Real money: the honest figure is the wallet, not the sum of trades. It carries every fee and every rejected
     // order, which is exactly what the owner noticed was missing.
     const liveMode = s.mode === 'live';
-    const shown = liveMode && s.walletDeltaSol != null ? s.walletDeltaSol : s.stats.pnl;
+    // RULE ADDED 2026-11-05: the number and its label must be the same fact. With the bot stopped there is no session
+    // to measure, so the card falls back to the book's own profit - and calling that "since Start" was a lie on the
+    // very first screen after a restart (-0.053 SOL of closed trades, read as this session's result).
+    const hasDelta = liveMode && s.walletDeltaSol != null;
+    const shown = hasDelta ? s.walletDeltaSol : s.stats.pnl;
     const pnl = $('#sPnl'); pnl.textContent = signed(shown); pnl.className = shown > 0 ? 'pos' : shown < 0 ? 'neg' : '';
     const sub = $('#sPnlSub');
     if (sub) {
@@ -159,7 +169,7 @@
         ? ` · entries priced at the pool ${Number(epx.curve || 0)}, at the board ${Number(epx.board || 0)}, refused ${Number(epx.refused || 0)}`
         : '';
       sub.textContent = liveMode
-        ? `SOL · fees ${sol(fees, 4)}${fails ? ` · ${fails} refused` : ''}${pxNote}`
+        ? `SOL · ${hasDelta ? 'since Start' : 'closed trades'}${fees ? ` · fees ${sol(fees, 4)}` : ''}${fails ? ` · ${fails} refused` : ''}${pxNote}`
         : `SOL · practice${pxNote}`;
     }
     const closed = s.stats.wins + s.stats.losses;
@@ -186,27 +196,52 @@
     if (tab === 'settings') renderRpcList();
   }
 
+  // The percentage as the card shows it, in one place so the two drawing paths can never disagree: an unknown price
+  // is a dash, never a zero, and a move of a hundredth of a point is "0.0%", never "-0.0%".
+  function pctText(pct) {
+    if (pct == null) return '—';
+    const v = Number(pct);
+    if (!Number.isFinite(v)) return '—';
+    if (Math.abs(v) < 0.05) return '0.0%';
+    return (v > 0 ? '+' : '') + v.toFixed(1) + '%';
+  }
+  const pctClass = (pct) => (pct == null || !Number.isFinite(Number(pct)) ? '' : Number(pct) >= 0 ? 'pos' : 'neg');
+  function positionRow(p) {
+    const pct = p.pnlPct == null ? null : Number(p.pnlPct);
+    const cls = pctClass(pct);
+    return h('div', { class: 'row', 'data-mint': p.mint },
+      h('div', {}, h('b', {}, '$' + (p.symbol || '?')), h('small', { 'data-note': '' }, `${sol(p.solIn, 3)} SOL · ${fmtAge(p.heldSec)}${p.paper ? ' · practice' : ''}${p.pending ? ' · confirming…' : ''}${Number(p.pxAgeSec) >= 6 ? ` · no price ${fmtAge(p.pxAgeSec)}` : ''}`)),
+      h('div', { class: cls, 'data-px': '' }, h('b', { class: cls }, pctText(pct))),
+      h('button', { class: 'btn small ghost', disabled: p.status !== 'open', onclick: () => {
+        call(api.botSell(p.mint)).then(() => toast(`Sold ${p.symbol}.`)).catch((e) => toast(e.message, true));
+      } }, 'Sell'));
+  }
+  /**
+   * Open positions, updated in place.
+   *
+   * RULE CHANGED 2026-11-05 (the owner: "całe UI z Open positions skacze"): this used to clear the panel and build every
+   * row again whenever the set of mints changed - and the set changes on every refused entry, because the buy path holds
+   * a slot while it asks the pool for a price (500 refusals in one paper session). One coin arriving or leaving threw
+   * every row away, so the eye saw the whole list jump. Rows now stay put: a coin that left is removed, a coin that
+   * arrived is appended, everything else is left alone.
+   */
   function renderPositions(s) {
     const box = $('#positions');
-    let rows;
-    try {
-      rows = (s.positions || []).map((p) => {
-        const pct = Number(p.pnlPct) || 0;
-        const cls = pct >= 0 ? 'pos' : 'neg';
-        return h('div', { class: 'row', 'data-mint': p.mint },
-          h('div', {}, h('b', {}, '$' + (p.symbol || '?')), h('small', { 'data-note': '' }, `${sol(p.solIn, 3)} SOL · ${fmtAge(p.heldSec)}${p.paper ? ' · practice' : ''}${p.pending ? ' · confirming…' : ''}${Number(p.pxAgeSec) >= 6 ? ` · no price ${fmtAge(p.pxAgeSec)}` : ''}`)),
-          h('div', { class: cls, 'data-px': '' }, h('b', { class: cls }, (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%')),
-          h('button', { class: 'btn small ghost', disabled: p.status !== 'open', onclick: () => {
-            call(api.botSell(p.mint)).then(() => toast(`Sold ${p.symbol}.`)).catch((e) => toast(e.message, true));
-          } }, 'Sell'));
-      });
-    } catch (_) {
+    const list = s.positions || [];
+    const have = new Map([...box.querySelectorAll('[data-mint]')].map((el) => [el.dataset.mint, el]));
+    const want = new Set(list.map((p) => p.mint));
+    for (const [mint, el] of have) if (!want.has(mint)) el.remove();
+    if (!list.length) {
+      box.textContent = 'No open positions. The bot buys when a coin looks strong.';
+      box.classList.add('empty');
       return;
     }
-    clear(box);
-    box.classList.toggle('empty', !rows.length);
-    if (!rows.length) { box.textContent = 'No open positions. The bot buys when a coin looks strong.'; return; }
-    for (const r of rows) box.append(r);
+    if (box.classList.contains('empty')) { box.textContent = ''; box.classList.remove('empty'); }
+    for (const p of list) {
+      const existing = have.get(p.mint);
+      if (existing && existing.isConnected) continue;
+      box.append(positionRow(p));
+    }
   }
 
   /**
@@ -225,9 +260,9 @@
       const cell = row.querySelector('[data-px]');
       const note = row.querySelector('[data-note]');
       if (!cell) continue;
-      const pct = Number(p.pnlPct) || 0;
-      const cls = pct >= 0 ? 'pos' : 'neg';
-      const text = (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%';
+      const pct = p.pnlPct == null ? null : Number(p.pnlPct);
+      const cls = pctClass(pct);
+      const text = pctText(pct);
       const b = cell.firstElementChild;
       if (b && b.textContent !== text) b.textContent = text;
       if (cell.className !== cls) { cell.className = cls; if (b) b.className = cls; }
@@ -238,6 +273,9 @@
         const line = `${sol(p.solIn, 3)} SOL · ${fmtAge(p.heldSec)}${p.paper ? ' · practice' : ''}${p.pending ? ' · confirming…' : ''}${p.closing ? ' · selling…' : ''}${stale}`;
         if (note.textContent !== line) note.textContent = line;
       }
+      // The Sell button follows the position's own state: a row is never rebuilt to change that any more.
+      const btn = row.querySelector('button');
+      if (btn) { const off = p.status !== 'open'; if (btn.disabled !== off) btn.disabled = off; }
     }
   }
   function renderHistory(s) {
@@ -248,15 +286,15 @@
     try {
       rows = (s.history || []).slice(0, 8).map((t) => {
         const pnl = Number(t.pnlSol) || 0;
-        const pct = Number(t.pnlPct) || 0;
+        const pct = t.pnlPct == null ? null : Number(t.pnlPct);
         const cls = pnl >= 0 ? 'pos' : 'neg';
         // The peak is the honest footnote of a closed trade: "peaked at +41%" next to a fill at +8% says the exit was
         // early, and a row without it is a row that hides the most useful fact about the trade.
-        const peak = t.peakPct == null ? '' : ` · peaked ${Number(t.peakPct) >= 0 ? '+' : ''}${Number(t.peakPct).toFixed(1)}%`;
+        const peak = t.peakPct == null ? '' : ` · peaked ${pctText(t.peakPct)}`;
         const held = t.heldSec == null ? '' : ` · held ${fmtAge(t.heldSec)}`;
         return h('div', { class: 'row' },
           h('div', {}, h('b', {}, '$' + (t.symbol || '?')), h('small', {}, `${t.reason || 'Sold'} · ${fmtTime(t.ts)}${peak}${held}`)),
-          h('div', { class: cls }, h('b', { class: cls }, signed(pnl, 4) + ' SOL'), h('small', {}, (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%')));
+          h('div', { class: cls }, h('b', { class: cls }, signed(pnl, 4) + ' SOL'), h('small', { class: pctClass(pct) }, pctText(pct))));
       });
     } catch (e) {
       return;
@@ -376,6 +414,12 @@
   });
   $('#sellAllBtn').addEventListener('click', () => call(api.botSellAll())
     .then((r) => toast(`Sold ${r && r.sold ? r.sold : 'every'} position${r && r.sold === 1 ? '' : 's'}.`))
+    .catch((e) => toast(e.message, true)));
+  // The pause after a cold streak (or after selling everything) used to be something to wait out. It is a decision, so
+  // it is one press away from being undone - and the button is inside the note, where the reason is read.
+  const resumeBtn = document.getElementById('resumeBtn');
+  if (resumeBtn) resumeBtn.addEventListener('click', () => call(api.botResume())
+    .then(() => toast('Looking for coins again.'))
     .catch((e) => toast(e.message, true)));
 
   $('#modeSeg').addEventListener('click', async (e) => {
@@ -780,7 +824,7 @@
     // sale at a number that is not the target explains itself. The simple mode reads only its own plan: saying "a
     // trail follows the peak" while the trail is switched off would be the desk lying to its owner.
     const plan = settings.simpleMode
-      ? [`everything at +${settings.takeProfitPct}%`, `a stop at -${settings.stopLossPct}%`, `and nothing is held longer than ${settings.maxHoldSec} s`].join(', ')
+      ? [`everything at +${settings.takeProfitPct}%`, `a stop at -${settings.stopLossPct}%`, 'half of any run past +20% is kept', `and nothing is held longer than ${settings.maxHoldSec} s`].join(', ')
       : [
       settings.tp1Pct > 0 ? `${settings.tp1SellPct}% goes out at +${settings.tp1Pct}%` : '',
       `the rest at +${settings.takeProfitPct}%`,
@@ -844,7 +888,9 @@
   $('#postShare').addEventListener('click', async () => {
     const r = await fillShareCode();
     if (!r) return;
-    const text = `My PillCrew Sniper settings: ${r.text}\nPaste this code in Settings to copy them:\n${r.code}`;
+    // Short on purpose: the whole post has to fit in 280 characters, and the code already carries the plan - the
+    // description line pushed it over the limit (320) as well as being the thing that made X see a link.
+    const text = `PillCrew Sniper settings - paste into Settings:\n${r.code}`;
     call(api.openExternal('https://twitter.com/intent/tweet?text=' + encodeURIComponent(text))).catch((e) => toast(e.message, true));
   });
   $('#applyShare').addEventListener('click', async () => {

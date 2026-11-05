@@ -54,7 +54,7 @@ program:
 Settings ends with a **Share your settings** card. It writes one code of about 170 characters:
 
 ```
-PCS1.eyJ2IjoxLCJwIjoiYmFsYW5jZWQiLCJuIjpbNjgsOCwyLDIwLDE1MCwyMDAwLDMsNDUsMC4wMDQsMSwxMCwxMzAsOSwyNDAsMTgsNzAsMCwxMiw4LDQwMCwxMiwwLjAwMDIsMC4wMzIsNSw4LDMsMzAsNDAsMzUsNF19.z5
+PCS1~eyJ2IjoxLCJwIjoiYmFsYW5jZWQiLCJuIjpbNjgsOCwyLDIwLDE1MCwyMDAwLDMsNDUsMC4wMiwxLDEwLDEzMCw5LDI0MCwxOCw3MCwwLDEyLDgsNDAwLDEyLDAuMDAwMiwwLjM1LDUsOCwzLDMwLDQwLDM1LDQsMjUsMSwwLDBdfQ~j2
 ```
 
 Post it on X.com, someone pastes it into their app and gets your entry bar, your whole exit ladder, your

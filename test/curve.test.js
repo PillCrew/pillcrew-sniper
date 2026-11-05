@@ -150,14 +150,32 @@ const LAUNCH_VSOL = 30000000000n;
     assert.ok(!p.refuse);
     assert.strictEqual(p.mc, 20, 'a suspicious pool is ignored rather than trusted');
 
-    // No pool to read at all: the board is used only while the coin has been heard about recently.
+    // A board with NO price at all cannot veto the pool: a launch the board has not seen yet still has reserves, and
+    // the pool is the number the order fills at. Passing the board's zero through opened the position at 0, so every
+    // percentage was measured from the first price seen *after* the buy instead of from what was paid.
+    withPool(Number(LAUNCH_VSOL) * (33 / 27.96));
+    p = await e._entryPrice(tok(0));
+    assert.ok(!p.refuse, 'a coin whose board price is missing is priced from its pool');
+    assert.ok(Math.abs(p.mc - 33) < 0.5, `the pool is the entry price when the board has none, got ${p.mc}`);
+
+    // RULE CHANGED 2026-11-05 (replaced "a live stream is a price on its own"): no pool price, no entry - the board is
+    // somebody else's number, and every wrong percentage of the day was an entry on it. The offline harness still falls
+    // back, because there is no money and no pool to ask.
     e.rpcCall = async () => { throw new Error('no node'); };
     p = await e._entryPrice(tok(25));
-    assert.ok(!p.refuse, 'a live stream is a price on its own');
+    assert.ok(p.refuse, 'no pool price means no entry, whatever the board says');
+    assert.match(String(p.refuse), /No pool price to buy on/);
+    e.offline = true;
+    p = await e._entryPrice(tok(25));
+    assert.ok(!p.refuse, 'the offline harness still prices from the board');
     assert.strictEqual(p.src, 'board');
+    assert.ok(Math.abs(p.mc - 25) < 0.5, `offline the board is the entry, got ${p.mc}`);
+    e.offline = false;
     const old = tok(25);
     old.lastActivity = Date.now() - 60000;
+    e.offline = true;
     p = await e._entryPrice(old);
+    e.offline = false;
     assert.match(String(p.refuse), /No fresh price/, 'a row nobody refreshed in a minute is not a price');
   }
 
@@ -175,10 +193,15 @@ const LAUNCH_VSOL = 30000000000n;
     const fossil = () => account({ vTok: LAUNCH_VTOK, vSol: LAUNCH_VSOL * 3n, complete: true });
     e.rpcCall = async (fn, opts) => fn({ getMultipleAccountsInfo: async (keys) => keys.map(fossil) }, opts);
 
-    // The entry: a graduated coin is priced by its market, never by the curve that stopped at graduation.
-    const p1 = await e._entryPrice({ mint, symbol: 'G', mc: 300, mcHist: [], trades: [], status: 'watching', lastActivity: Date.now() });
-    assert.ok(!p1.refuse, 'a graduated coin with a live board price is still buyable');
-    assert.strictEqual(p1.mc, 300, 'and it costs the board price, not the frozen curve');
+    // The entry: a graduated coin is priced by its market, never by the curve that stopped at graduation - and that
+    // market must be the POOL the order fills against, which the graduated coin's PumpSwap row is. RULE CHANGED
+    // 2026-11-05: a plain board number (foreign pool, or no row at all) is no longer a buy price; the row has to be
+    // the graduated coin's own PumpSwap pair.
+    const p1 = await e._entryPrice({ mint, symbol: 'G', mc: 300, mcHist: [], trades: [], status: 'watching', lastActivity: Date.now(), ext: { dexId: 'pumpswap', at: Date.now() } });
+    assert.ok(!p1.refuse, 'a graduated coin with a live PumpSwap row is still buyable');
+    assert.strictEqual(p1.mc, 300, 'and it costs that pool price, not the frozen curve');
+    const pNone = await e._entryPrice({ mint, symbol: 'G2', mc: 300, mcHist: [], trades: [], status: 'watching', lastActivity: Date.now() });
+    assert.ok(pNone.refuse, 'a graduated coin with no pool row is refused, not priced from a guess');
 
     // And a held one is not repriced by it.
     e.positions.set(mint, {

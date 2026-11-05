@@ -4,28 +4,41 @@ const os = require('os');
 const path = require('path');
 const { Store } = require('../src/store');
 const { Engine, DEFAULTS } = require('../src/engine');
+const WSOL = 'So11111111111111111111111111111111111111112';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'exits-'));
 const wallet = { exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: null };
 
-function engine(overrides = {}) {
-  const store = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'exits-')), 's.json', DEFAULTS);
-  store.set({ mode: 'paper', takeProfitPct: 40, stopLossPct: 20, maxHoldSec: 600, trailArmPct: 15, trailGivePct: 8, tp1Pct: 0, breakEvenPct: 0, triggerHoldMs: 0, ...overrides });
+function engine(overrides = {}, storeDir = null) {
+  const store = new Store(storeDir || fs.mkdtempSync(path.join(os.tmpdir(), 'exits-')), 's.json', DEFAULTS);
+  // RULE CHANGED 2026-11-05: the shipped plan is the SIMPLE one (target, stop, time limit, and one give-back floor
+  // for a big run). Every case below names the ladder it is testing, so the harness runs the full desk - and the
+  // simple-mode behaviour has its own cases here and in `modules.test.js`.
+  store.set({ mode: 'paper', simpleMode: false, takeProfitPct: 40, stopLossPct: 20, maxHoldSec: 600, trailArmPct: 15, trailGivePct: 8, tp1Pct: 0, breakEvenPct: 0, triggerHoldMs: 0, ...overrides });
   const e = new Engine(wallet, store);
   clearInterval(e._bal);
   clearInterval(e._ui);
   e.refreshBalance = () => {};
+  // The harness has no chain, so a sale's transaction can never be found: measuring it would wait its half-second
+  // second look on every exit in the suite. The measurement has tests of its own (`_txSolDelta` / `_measureProceeds`).
+  e._measureProceeds = async () => null;
   e._log = () => {};
   e.running = true;
   // A real session always knows the exchange rate, because the engine asks for it before judging a market-priced
   // coin. Without one here, a dollar net-flow figure could not be turned into SOL and every such coin would fail on
   // "needs net buying" for a reason the test is not about.
   e.market.solPrice = () => 150;
+  // RULE CHANGED 2026-11-05: a live entry now requires the POOL's own price, and these harnesses have no node to read
+  // one from. The pool number is supplied here: these tests are about the exits and the retry ladder, not about how the
+  // entry was priced (that has its own test in `curve.test.js`).
+  e._entryPrice = async () => ({ mc: 100, src: 'curve' });
   return e;
 }
 
 function open(e, mint, solIn = 1) {
-  const p = { mint, symbol: mint, entryMc: 100, mc: 100, peakMc: 100, solIn, feeBuy: 0.0001, openedAt: Date.now(), status: 'open', closing: false, paper: true, fails: 0, nextTry: 0 };
+  // `pxSeed: true` mirrors a position that was just opened: its price is the entry's own reading, so the first live
+  // print is taken as it comes (see `_pricePosition` and `_buy`).
+  const p = { mint, symbol: mint, entryMc: 100, mc: 100, peakMc: 100, solIn, feeBuy: 0.0001, openedAt: Date.now(), status: 'open', closing: false, paper: true, fails: 0, nextTry: 0, pxSeed: true };
   e.positions.set(mint, p);
   e.tokens.set(mint, { mint, symbol: mint, mc: 100, mcHist: [], trades: [], status: 'bought', sources: new Set(['launch']) });
   return p;
@@ -302,8 +315,10 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     open(e, 'HOT');
     const hot = e.tokens.get('HOT');
     hot.mcHist = [[Date.now() - 10000, 10], [Date.now(), 40]];
-    hot.ext = { at: Date.now(), change5m: 180, buys: 40, sells: 5, netUsd: 500, liqUsd: 9000, mcSol: 40 };
-    hot.mc = 40;
+    // RULE CHANGED 2026-11-05: the shipped band starts at 60 SOL, and a 90 SOL coin is inside it - the point of this
+    // case is the five minute ceiling, not the floor.
+    hot.ext = { at: Date.now(), change5m: 180, buys: 40, sells: 5, netUsd: 500, liqUsd: 9000, mcSol: 90 };
+    hot.mc = 90;
     const v = e._eval(hot, Date.now());
     assert.strictEqual(v.pass, false);
     assert.match(v.reason, /Already up 180%/);
@@ -487,7 +502,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
   // The reserve: an entry may never spend the SOL that pays the exits, and an order in flight is not offered again
   // while the chain reading is still behind.
   {
-    const e = engine({ mode: 'live', buyAmountSol: 0.001 });
+    const e = engine({ mode: 'live', buyAmountSol: 0.01 });
     const said = [];
     e._log = (level, msg) => said.push({ level, msg });
     e.walletBalance = 0.02;
@@ -572,8 +587,11 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     const e = engine({ triggerHoldMs: 0 });
     const p = open(e, 'FAST');
     assert.ok(!p.pxAt, 'a fresh position has no reading yet');
-    e.ingest({ mint: 'FAST', txType: 'buy', marketCapSol: 160, solAmount: 1, traderPublicKey: 'someone' });
-    assert.ok(Math.abs(p.mc - 160) < 0.01, `the trade itself set the price, got ${p.mc}`);
+    // RULE CHANGED 2026-11-05: the print used here is +48%, under the wild-move line. A print that jumps the price by
+    // more than half is now asked to appear twice even on the first reading (measured on $sol: a 4x first print
+    // fired "Take profit at +301.4%" into a fill at -15.0%), and that rule has its own test below.
+    e.ingest({ mint: 'FAST', txType: 'buy', marketCapSol: 148, solAmount: 1, traderPublicKey: 'someone' });
+    assert.ok(Math.abs(p.mc - 148) < 0.01, `the trade itself set the price, got ${p.mc}`);
     assert.strictEqual(p.pxSource, 'chain');
     assert.ok(p.pxAt > 0, 'and the reading is stamped');
     e._tick();
@@ -652,7 +670,14 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(e._slippageFor('SPIKE', true, 70), 15, 'a spike gets 15%, not 40%');
     assert.strictEqual(e._slippageFor('SPIKE', true, 5), 15, 'and so does a small profit: a 40% order may fill at -32%');
     assert.ok(e._slippageFor('SPIKE', true, -12) >= 20, 'a losing exit keeps its wide tolerance, because it has to fill');
-    assert.ok(e._slippageFor('SPIKE', false, 0) <= 10, 'a take profit keeps the tight ceiling');
+    // RULE CHANGED: a take profit is an exit too. The user's slippage is an ENTRY ceiling, and with a 1% setting every
+    // take profit was refused the moment the pool moved - the retry was priced where the coin was by then, and a +70%
+    // winner was booked at -89% with the coin back up two seconds later. A profit exit now gets at least SPIKE_SLIP.
+    const tight = engine({ takeProfitPct: 30, slippagePct: 1 });
+    open(tight, 'TIGHT');
+    assert.ok(tight._slippageFor('TIGHT', false, 70) >= 15, `a 1% ceiling cannot wedge a take profit, got ${tight._slippageFor('TIGHT', false, 70)}`);
+    assert.ok(tight._slippageFor('TIGHT', false, -5) >= 1, 'and an exit under water still asks for its own room');
+    assert.ok(tight._slippageFor('TIGHT', true, 70) >= 15, 'a stop still has room');
   }
 
   // A price that is not arriving any more must not look like a price. Measured live on 2026-11-05: a coin went from a
@@ -777,7 +802,617 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(sold, true, 'a restored coin that never gets a price is still sold, just later');
   }
 
+  // The price lane for a held coin. A graduated coin has no curve left to read and the price service answers for only
+  // some mints, so the board of its PumpSwap pair is the door that is always there - and it used to be asked once
+  // every 1.2 s, which is a stop at -9% filling at -14%. It is now asked every half second, and only for a coin with
+  // no live stream (a stream already prices it on the arrow).
+  {
+    const e = engine();
+    const p = open(e, 'BOARD');
+    p.paper = false; p.status = 'open'; p.tokIn = 1000n; p.pxAt = Date.now(); p.mc = 100; p.entryMc = 100;
+    const calls = [];
+    e.market.prices = async () => new Map();
+    e.market.enrich = async (mints, urgent) => {
+      calls.push({ mints: [...mints], urgent });
+      return new Map([['BOARD', { mint: 'BOARD', priceUsd: 2, priceNative: 0, mcapUsd: 0, liquidity: { usd: 5000 } }]]);
+    };
+    e.rpcCall = async () => { throw new Error('no node'); };
+    // The depth sweep is pushed into the future so the only thing that can ask for this coin is the fast lane.
+    e._posEnrichAt = Date.now(); e._posBoardAt = 0; e._lostAt = Date.now();
+    await e._pollPositions();
+    assert.ok(calls.some((c) => c.urgent && c.mints.includes('BOARD')), 'the board is asked for a held coin with no stream');
+    assert.ok(p.pxPull > 0, 'and its answer becomes the quote the position is priced from');
+
+    // A coin whose stream is talking needs no board at all: the stream already carries the pool's own number.
+    const t = e.tokens.get('BOARD');
+    t.lastStreamAt = Date.now(); t.mc = 150;
+    calls.length = 0;
+    e._posEnrichAt = Date.now(); e._posBoardAt = 0;
+    await e._pollPositions();
+    assert.ok(!calls.some((c) => c.mints.includes('BOARD')), 'a coin with a live stream is not asked for again');
+
+    // RULE ADDED 2026-11-05: a pair on another exchange is not this desk's market. `enrich` returns the deepest-liquidity
+    // pair, and a young pump.fun coin is often listed on a copy-cat exchange with a few dollars in it. Measured in a
+    // paper run on the shipped plan: one such pair quoted 4x and the target sold the position at "+434.6%" in thirty
+    // seconds. A foreign row may not set the price a rule acts on.
+    const p2 = open(e, 'FOREIGN');
+    p2.paper = false; p2.status = 'open'; p2.tokIn = 1000n; p2.mc = 100; p2.entryMc = 100;
+    const t2 = e.tokens.get('FOREIGN');
+    t2.lastStreamAt = 0; t2.mc = 0;
+    e.market.enrich = async (mints) => new Map([['FOREIGN', {
+      mint: 'FOREIGN', dexId: 'raydium', priceUsd: 9, priceNative: 0, mcapUsd: 0, liquidity: { usd: 40 },
+    }]]);
+    e._posBoardAt = 0; e._posEnrichAt = Date.now(); e._lostAt = 0;
+    await e._pollPositions();
+    assert.ok(!(p2.pxPull > 0), 'a quote from another exchange never becomes the position\'s price');
+    e.market.enrich = async () => new Map([['FOREIGN', {
+      mint: 'FOREIGN', dexId: 'pumpswap', priceUsd: 1, priceNative: 0, mcapUsd: 0, liquidity: { usd: 5000 },
+    }]]);
+    e._posBoardAt = 0; e._lostAt = 0;
+    await e._pollPositions();
+    assert.ok(p2.pxPull > 0, 'its own PumpSwap pool still does');
+
+    // RULE NARROWED 2026-11-05 (measured on $SAFU: stopped at -101.4% in one session and sold at "+1142.5%" in the next):
+    // a graduated coin keeps its old pump.fun pair listed, frozen at the graduation figure. Both pairs are the coin's
+    // own, so the exchange name alone cannot tell them apart - the coin's own state does.
+    const p3 = open(e, 'FOSSIL');
+    p3.paper = false; p3.status = 'open'; p3.tokIn = 1000n; p3.mc = 100; p3.entryMc = 100;
+    e.tokens.get('FOSSIL').graduated = true;
+    e.tokens.get('FOSSIL').lastStreamAt = 0;
+    e.market.enrich = async () => new Map([['FOSSIL', {
+      mint: 'FOSSIL', dexId: 'pumpfun', priceUsd: 40, priceNative: 0, mcapUsd: 0, liquidity: { usd: 300 },
+    }]]);
+    e._posBoardAt = 0; e._posEnrichAt = Date.now(); e._lostAt = 0;
+    await e._pollPositions();
+    assert.ok(!(p3.pxPull > 0), 'the frozen curve of a graduated coin is not a price');
+  }
+
+  // The percentage must move with the price and with nothing else. Smart fees follow the live fee market, so a
+  // position measured against the current exit tip showed a percentage that wandered while the price stood still -
+  // and the stop and the trail move with that number. The trade is judged on what it cost when it was taken.
+  {
+    const e = engine({ mode: 'live', smartFees: true, priorityFeeSol: 0.01, buyAmountSol: 0.01 });
+    const p = open(e, 'FEES');
+    p.paper = false; p.solIn = 0.01; p.feeBuy = 0.0002; p.feeExitEst = 0.0002; p.mc = at(20);
+    e._feeSol = 0.0001;
+    const quiet = e._pnlPct(p);
+    e._feeSol = 0.005;                                  // the network got busy; the price did not move
+    assert.strictEqual(e._pnlPct(p), quiet, 'the same price reads the same percentage whatever the fee market does');
+  }
+
+  // A position whose price is not known yet shows a dash, not a number: "0.0%" is a fact about the market, and while
+  // an unadopted holding has no reference price there is no such fact to report.
+  {
+    const e = engine();
+    const p = open(e, 'EMPTY');
+    p.entryMc = 0; p.mc = 0;
+    assert.strictEqual(e._positionsView()[0].pnlPct, null, 'no reference price means no percentage at all');
+    p.entryMc = 100; p.mc = 100;
+    assert.ok(Number.isFinite(e._positionsView()[0].pnlPct), 'and a priced coin reports the real move');
+  }
+
+  // Two entries into one coin at the same moment. The holder lookup is a network wait, so the guard made before it is
+  // only a guess about the state after it. Measured in a paper session: two buys of one coin 16 ms apart, because both
+  // calls passed the same check before either had written its position - two losses instead of one.
+  {
+    const e = engine({ deepEntry: true, minHolders: 1, maxPositions: 5, simpleMode: false });
+    const buys = [];
+    e._log = (lvl, msg) => { if (lvl === 'buy') buys.push(msg); };
+    e._entryPrice = async () => ({ mc: 40, src: 'curve' });
+    const t = { mint: 'RACE1', symbol: 'RACE', name: 'R', mc: 40, mcHist: [], trades: [], status: 'watching', score: 90, reason: '', lastActivity: Date.now(), createdAt: Date.now() };
+    e.tokens.set('RACE1', t);
+    const ev = { score: 90, m: { buyers: 20, net: 5 } };
+    const waiting = [];
+    e._holdersFor = () => new Promise((r) => waiting.push(() => r(500)));
+    const cashBefore = e.paper.balance;
+    const a = e._buy(t, ev);
+    const b = e._buy(t, ev);
+    await new Promise((r) => setTimeout(r, 10));
+    assert.strictEqual(waiting.length, 2, 'both calls reached the network wait, so both passed the first check');
+    waiting.forEach((f) => f());
+    await Promise.all([a, b]);
+    // The book is a map, so a second entry does not double the position - it OVERWRITES it, having spent the SOL: the
+    // only witness is how many times money left.
+    assert.strictEqual(buys.length, 1, `one coin is bought once, got ${buys.length}`);
+    assert.ok(Math.abs((cashBefore - e.paper.balance) - (0.02 * 1.02 + 0.0002)) < 0.01, 'and the wallet was debited once');
+  }
+
+  // RULE ADDED 2026-11-05 (the owner: "całe UI z Open positions skacze, pojawiają się monety których nie kupił"): the buy
+  // path holds the slot in `positions` while it asks the pool for a price, and drops it again when the price is refused
+  // (500 refusals in one paper session). The panel reads the published view, so an unpaid slot must never be in it.
+  {
+    const e = engine({ maxPositions: 5 });
+    const t = { mint: 'GHOST1', symbol: 'GHOST', name: 'G', mc: 40, mcHist: [], trades: [], status: 'watching', score: 90, reason: '', lastActivity: Date.now(), createdAt: Date.now() };
+    e.tokens.set('GHOST1', t);
+    e._entryPrice = async () => ({ mc: 40, refuse: 'No pool price to buy on' });
+    await e._buy(t, { score: 90, m: { buyers: 20, net: 5 } });
+    assert.strictEqual(e.positions.size, 0, 'a refused entry leaves nothing behind');
+    assert.deepStrictEqual(e._positionsView(), [], 'and nothing was ever on the panel');
+
+    // The price arrives while the page is already drawing: until it does, the row is not a position.
+    let release;
+    e._entryPrice = () => new Promise((r) => { release = () => r({ mc: 40, src: 'curve' }); });
+    const t2 = { mint: 'GHOST2', symbol: 'GHOST2', name: 'G', mc: 40, mcHist: [], trades: [], status: 'watching', score: 90, reason: '', lastActivity: Date.now(), createdAt: Date.now() };
+    e.tokens.set('GHOST2', t2);
+    const pendingBuy = e._buy(t2, { score: 90, m: { buyers: 20, net: 5 } });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.ok(e.positions.has('GHOST2'), 'the slot is held while the pool is asked');
+    assert.deepStrictEqual(e._positionsView(), [], 'but nothing unpaid is drawn');
+    release();
+    await pendingBuy;
+    assert.strictEqual(e._positionsView().length, 1, 'once the pool answers, the position is on the panel');
+  }
+
+  // One trade print is not a market. A move of more than half the position's value in a single reading is asked to
+  // appear twice before it moves the position: a real crash prints again within milliseconds, while a phantom print
+  // (another pool, a misparsed field, one wash trade) can never fire a stop or a target on its own. Measured in a
+  // paper session: a coin "stopped out" at -63% one hundred and thirty milliseconds after it was bought.
+  {
+    const e = engine();
+    const p = open(e, 'WILD');
+    p.mc = 100; p.pxAt = Date.now(); p.pxSource = 'chain'; p.pxSeed = false;
+    const t = e.tokens.get('WILD');
+    t.lastStreamAt = Date.now();
+    t.mc = 30;                                        // one print says the coin lost 70%
+    e._pricePosition(p, Date.now());
+    assert.strictEqual(p.mc, 100, 'one print is not a move');
+    t.mc = 30;                                        // ...the next trades agree with it
+    e._pricePosition(p, Date.now());
+    assert.ok(Math.abs(p.mc - 30) < 0.01, `two agreeing prints are the market, got ${p.mc}`);
+
+    // A normal step is taken at once, with no second look: the guard only covers the absurd.
+    const q = open(e, 'STEP');
+    q.mc = 100; q.pxAt = Date.now(); q.pxSeed = false;
+    e.tokens.get('STEP').lastStreamAt = Date.now();
+    e.tokens.get('STEP').mc = 92;
+    e._pricePosition(q, Date.now());
+    assert.ok(Math.abs(q.mc - 92) < 0.01, 'an ordinary move is taken on the first reading');
+  }
+
+  // RULE ADDED: the simple plan keeps ONE protective rule. It has no trail of its own, and a coin that peaked at
+  // +61.3% was booked at -89.2% with the coin back up two seconds later - the whole session's loss in one trade. Once
+  // a position has been up SIMPLE_RUN_ARM, half of that peak is kept.
+  {
+    const e = engine({ simpleMode: true, takeProfitPct: 50, stopLossPct: 30, maxHoldSec: 3600 });
+    let sold = null;
+    e._sell = (p, why) => { sold = why; };
+    const p = open(e, 'GIVEBACK');
+    p.paper = false; p.peakMc = at(61.3); p.mc = at(25);      // gave back more than half of a +61% run
+    e.positions.set('GIVEBACK', p);
+    e._tick();                                                // the first sight of a level only arms it
+    e._tick();                                                // the second fresh reading fires it
+    assert.match(String(sold), /Peak give-back/, `a +61% run is not allowed to turn into a loss, got ${sold}`);
+
+    // A small move gets no such treatment: below the arm the stop and the target are the whole plan.
+    const e2 = engine({ simpleMode: true, takeProfitPct: 50, stopLossPct: 30, maxHoldSec: 3600 });
+    let sold2 = null;
+    e2._sell = (p, why) => { sold2 = why; };
+    const q = open(e2, 'SMALLRUN');
+    q.paper = false; q.peakMc = at(15); q.mc = at(6);
+    e2.positions.set('SMALLRUN', q);
+    e2._tick();
+    assert.strictEqual(sold2, null, 'a +15% peak is not a run worth protecting');
+
+    // The full desk keeps its own trail and is untouched by this rule.
+    const e3 = engine({ simpleMode: false, trailArmPct: 50, takeProfitPct: 200, stopLossPct: 90 });
+    let sold3 = null;
+    e3._sell = (p, why) => { sold3 = why; };
+    const r = open(e3, 'FULLDESK');
+    r.paper = false; r.peakMc = at(61.3); r.mc = at(25);
+    e3.positions.set('FULLDESK', r);
+    e3._tick();
+    assert.strictEqual(sold3, null, 'the full desk is not given the simple plan rule');
+  }
+
+  // RULE ADDED 2026-11-05: the closed trades and the running totals are ON DISK. They used to live in memory only, so
+  // every restart wiped the day's profit and loss and the panel claimed a session that had never traded - and this
+  // app is restarted a dozen times a day while it is being tended.
+  {
+    const bookDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exits-book-'));
+    const e1 = engine({}, bookDir);
+    const p1 = open(e1, 'KEEP', 1);
+    p1.mc = 100 * (1 + 60 / 100);
+    e1._tick(); e1._tick();
+    await settle();
+    assert.ok(!e1.positions.has('KEEP'), 'the coin really was sold in the first session');
+    assert.strictEqual(e1.books.paper.trades, 1, 'and the book counted it');
+    const booked = e1.books.paper.pnl;
+    assert.ok(booked !== 0, 'with a real profit in it');
+
+    // A second engine on the same folder is what a restart really is.
+    const e2 = engine({}, bookDir);
+    assert.strictEqual(e2.books.paper.trades, 1, 'the restart knows the trade happened');
+    assert.strictEqual(e2.books.paper.pnl, booked, 'and keeps the profit, to the lamport');
+    assert.strictEqual(e2.history.length, 1, 'the closed trade is still on the list');
+    assert.strictEqual(e2.history[0].symbol, 'KEEP');
+    assert.match(e2.history[0].reason, /Take profit/, 'with the rule that closed it');
+    // Clearing the numbers is a decision, so it must survive a restart too - otherwise "Reset" is a lie.
+    e2.resetStats('paper');
+    const e3 = engine({}, bookDir);
+    assert.strictEqual(e3.books.paper.trades, 0, 'a cleared book stays cleared');
+    assert.strictEqual(e3.history.length, 0);
+    fs.rmSync(bookDir, { recursive: true, force: true });
+  }
+
   fs.rmSync(dir, { recursive: true, force: true });
+  // RULE ADDED 2026-11-05: the SOL a sale really moved is read from the transaction, and a LEGACY transaction names
+  // its keys `accountKeys` while a v0 one names them `staticAccountKeys`. Reading only the v0 name made every legacy
+  // sale unmeasurable, and "unmeasurable" books an estimate - measured live: LIBRE booked +0.0044 SOL where the wallet
+  // gained +0.0146 SOL, a winner reported at a third of its size.
+  {
+    const e = engine();
+    delete e._measureProceeds; // the real one, with its second look
+    const kp = wallet.keypair; // null in this harness: the fee payer is faked instead
+    const owner = { toBase58: () => 'OWNOUR' };
+    e.wallet = { keypair: { publicKey: owner } };
+    const legacy = {
+      meta: { preBalances: [5, 1000000000], postBalances: [5, 1005000000] },
+      transaction: { message: { accountKeys: [{ toBase58: () => 'OTHER' }, { toBase58: () => 'OWNOUR', equals: (k) => k === owner }] } },
+    };
+    e.rpcCall = async () => legacy;
+    assert.strictEqual(await e._txSolDelta('SIG'), 0.005, 'a legacy sale is measured');
+    const v0 = {
+      meta: { preBalances: [1000000000], postBalances: [1002000000] },
+      transaction: { message: { staticAccountKeys: [{ equals: (k) => k === owner }] } },
+    };
+    e.rpcCall = async () => v0;
+    assert.strictEqual(await e._txSolDelta('SIG'), 0.002, 'and so is a versioned one');
+    e.rpcCall = async () => ({ meta: { preBalances: [1], postBalances: [2] }, transaction: { message: {} } });
+    assert.strictEqual(await e._txSolDelta('SIG'), null, 'a transaction with no keys is honestly unknown');
+    e.rpcCall = async () => { throw new Error('rpc down'); };
+    assert.strictEqual(await e._txSolDelta('SIG'), null, 'and an unreachable node is unknown too, never a guess');
+    // A node that has not indexed the sale yet is asked once more, half a second later: an estimate is a third of the
+    // truth on a real sale (LIBRE, 2026-11-05).
+    let calls = 0;
+    e._txSolDelta = async () => (++calls === 1 ? null : 0.0146);
+    assert.strictEqual(await e._measureProceeds('SIG'), 0.0146, 'the second look measures the sale');
+    assert.strictEqual(calls, 2, 'exactly one second look, not a loop');
+    calls = 0;
+    e._txSolDelta = async () => { calls++; return 0.02; };
+    assert.strictEqual(await e._measureProceeds('SIG'), 0.02);
+    assert.strictEqual(calls, 1, 'a sale that measured the first time is not asked twice');
+    // A node that hands the RPC pool on to another endpoint answers a little later, so the last look is worth waiting
+    // for: measured live, three sales in a row booked estimates while the public nodes rotated.
+    calls = 0;
+    e._txSolDelta = async () => (++calls < 3 ? null : 0.031);
+    assert.strictEqual(await e._measureProceeds('SIG'), 0.031, 'a third look catches a slower node');
+    assert.strictEqual(calls, 3, 'and then it stops asking');
+  }
+
+  // RULES ADDED 2026-11-05, all three measured live on one stuck position (SAFU):
+  //  • a SALE lets the door find its own pool - naming `pump` for a coin that graduated made the door answer "Pool
+  //    account not found" for ever;
+  //  • the backup route rests for a minute after refusing to quote, instead of being waited for on every attempt;
+  //  • a coin whose pool has no liquidity is said ONCE, in words, and re-checked in ten minutes - not every second.
+  {
+    const e = engine();
+    const seen = [];
+    e._tradeLive = async (action, mint, amount, opt) => {
+      seen.push(opt);
+      if (opt.pool === 'pump') throw Object.assign(new Error('the trade door refused it (Pool account not found)'), { phase: 'build' });
+      throw Object.assign(new Error('the wallet holds nothing to sell'), { phase: 'build', noFee: true });
+    };
+    const p = open(e, 'GRAD');
+    p.paper = false; p.solIn = 0.01; p.feeBuy = 0; p.graduated = false;
+    e.wallet.keypair = { publicKey: { toBase58: () => 'OWNOUR' } };
+    await e._sell(p, 'Stop loss', 100).catch(() => {});
+    assert.ok(seen.length >= 1, 'the sale really tried a door');
+    assert.ok(seen.every((o) => o.pool === 'auto'), 'and it never guesses the curve (urgent path)');
+    // The non-urgent path asks one door at a time, and it must name no pool either: a take profit on a coin the desk
+    // never saw graduate was refused for twenty minutes on the live wallet.
+    const quietSeen = [];
+    const e2 = engine();
+    e2._tradeLive = async (action, mint, amount, opt) => {
+      quietSeen.push(opt);
+      throw Object.assign(new Error('the wallet holds nothing to sell'), { phase: 'build', noFee: true });
+    };
+    const q = open(e2, 'GRAD2');
+    q.paper = false; q.solIn = 0.01; q.feeBuy = 0; q.graduated = false;
+    q.mc = 150;                                  // a take profit only fires while the coin is up
+    e2.tokens.get('GRAD2').mc = 150;
+    e2.wallet.keypair = { publicKey: { toBase58: () => 'OWNOUR' } };
+    await e2._sell(q, 'Take profit', 100).catch(() => {});
+    assert.ok(quietSeen.length >= 1, 'the quiet path really tried a door');
+    assert.ok(quietSeen.every((o) => o.pool === 'auto'), 'and it never guesses the curve (quiet path)');
+  }
+  {
+    const e = engine();
+    let asked = 0;
+    e._jupiterSwap = async () => { asked++; throw new Error('Jupiter has no route (400: Failed to get quotes)'); };
+    await assert.rejects(() => e._backupTrade('sell', 'M', null, {}), /Failed to get quotes/);
+    assert.strictEqual(asked, 1);
+    await assert.rejects(() => e._backupTrade('sell', 'M', null, {}), /resting/);
+    assert.strictEqual(asked, 1, 'a refusing backup is not asked again inside the minute');
+    e._jupDownUntil = 0;
+    await assert.rejects(() => e._backupTrade('sell', 'M', null, {}), /Failed to get quotes/);
+    assert.strictEqual(asked, 2, 'and it is asked again after the rest');
+  }
+  {
+    const e = engine();
+    const p = open(e, 'RUG');
+    p.paper = false; p.solIn = 0.01; p.feeBuy = 0; p.fails = 2; p.openedAt = Date.now() - 5 * 60000;
+    e.wallet.keypair = { publicKey: { toBase58: () => 'OWNOUR' } };
+    e._tradeLive = async () => { throw Object.assign(new Error('the trade door refused it (Pool account not found)'), { phase: 'build' }); };
+    e._backupTrade = async () => { throw new Error('the backup route also failed'); };
+    const tok = e.tokens.get('RUG');
+    tok.ext = { liqUsd: 0, dexId: 'pumpswap', at: Date.now() };
+    const lines = [];
+    e._log = (level, msg) => lines.push(level + ': ' + msg);
+    p.nextTry = 0;
+    await e._sell(p, 'Stop loss', 100).catch(() => {});
+    const line = lines.find((l) => /no liquidity left/.test(l));
+    assert.ok(line, 'the emptied pool is said in words');
+    assert.ok(/ten minutes/.test(line), 'and what happens next');
+    assert.strictEqual(p.stuck, true, 'the position is marked so it is not hammered');
+    assert.ok(p.nextTry - Date.now() > 9 * 60000, 'with a long rest, not a 300 ms one');
+  }
+  // RULE CORRECTED 2026-11-05: a FRESH pump.fun coin reports no liquidity at all (its "pool" is the bonding curve),
+  // and the first version of the rule above read that as a dead pool and abandoned a live position for ten minutes -
+  // measured on lambo, bought for 0.01 SOL and declared worthless sixteen seconds later while it was up +146%.
+  {
+    for (const setup of [
+      { dexId: 'pumpfun', liqUsd: 0, fails: 5, ageMs: 10 * 60000, why: 'a curve coin has no liquidity figure to read' },
+      { dexId: 'pumpswap', liqUsd: 0, fails: 1, ageMs: 10 * 60000, why: 'one refusal is not a dead pool' },
+      { dexId: 'pumpswap', liqUsd: 0, fails: 5, ageMs: 10000, why: 'and a coin this young has not been indexed yet' },
+    ]) {
+      const e = engine();
+      const p = open(e, 'NOTDEAD');
+      p.paper = false; p.solIn = 0.01; p.feeBuy = 0; p.fails = setup.fails; p.openedAt = Date.now() - setup.ageMs;
+      e.wallet.keypair = { publicKey: { toBase58: () => 'OWNOUR' } };
+      e._tradeLive = async () => { throw Object.assign(new Error('the chain refused it'), { phase: 'build' }); };
+      e._backupTrade = async () => { throw new Error('the backup route also failed'); };
+      e.tokens.get('NOTDEAD').ext = { liqUsd: setup.liqUsd, dexId: setup.dexId, at: Date.now() };
+      const lines = [];
+      e._log = (level, msg) => lines.push(level + ': ' + msg);
+      p.nextTry = 0;
+      await e._sell(p, 'Stop loss', 100).catch(() => {});
+      assert.notStrictEqual(p.stuck, true, `a live coin is not written off: ${setup.why}`);
+      assert.ok(!lines.some((l) => /no liquidity left/.test(l)), `and nothing claims it is worthless: ${setup.why}`);
+      assert.ok(p.nextTry - Date.now() < 60000, `it keeps trying: ${setup.why}`);
+    }
+  }
+
+  // RULE ADDED 2026-11-05: an order the door refused must not hold the ticket against the balance. Measured live on a
+  // 0.022 SOL wallet: one buy skipped with "quoted in another token" left `Not enough SOL (0.0078 free, 0.0127 needed)`
+  // on every following attempt for a minute, because the spend note lives 60 s.
+  {
+    const e = engine();
+    const p = open(e, 'NOTHING');
+    p.paper = false;
+    const entry = e._noteSpend(0.0122);
+    assert.strictEqual(e._pendingSpend(), 0.0122, 'the ticket is held while the order is in the air');
+    e._releaseSpend(entry);
+    assert.strictEqual(e._pendingSpend(), 0, 'and given back the moment the order is known not to have landed');
+    assert.strictEqual(e._releaseSpend(null), undefined, 'releasing nothing is not an error');
+  }
+
+  // RULE ADDED 2026-11-05: a sale booked from an ESTIMATE is measured again in the background and the row is
+  // corrected. Measured live: three sales in one afternoon were booked as "(estimated)" while the public nodes were
+  // rotating on 429 - one of them (LIBRE) was booked +0.0044 SOL when the wallet really gained +0.0146.
+  {
+    // The queueing side: a sale with a signature and no measurement is queued, one that was measured is not.
+    const eq = engine();
+    eq._settleMint = () => {};
+    eq._shutdownIfIdle = () => {};
+    eq._persistBook = () => {};
+    const est = open(eq, 'EST');
+    est.paper = false; est.sig = 'SIGEST'; est.proceeds = null; est.solIn = 0.01; est.feeBuy = 0;
+    eq._finishSell(est, 'Stop loss', 0.0001, 100);
+    assert.strictEqual((eq._remeasure || []).length, 1, 'an estimated sale is queued for a second look');
+    assert.strictEqual(eq._remeasure[0].sig, 'SIGEST');
+    const meas = open(eq, 'MEAS');
+    meas.paper = false; meas.sig = 'SIGMEAS'; meas.proceeds = 0.011; meas.solIn = 0.01; meas.feeBuy = 0;
+    eq._finishSell(meas, 'Stop loss', 0.0001, 100);
+    assert.strictEqual(eq._remeasure.length, 1, 'a sale the chain already measured is not queued');
+  }
+  {
+    const e = engine();
+    const row = { ts: Date.now(), symbol: 'LATE', mint: 'LATE', solIn: 0.01, pnlSol: -0.0037, pnlPct: -36.6, reason: 'Stop loss', paper: false };
+    e.books.live.trades = 1; e.books.live.losses = 1; e.books.live.pnl = -0.0037;
+    e._remeasure = [{ sig: 'SIG', row, soldSol: 0.01, feeBuy: 0, rentBack: 0, tries: 1, nextAt: 0 }];
+    let asked = null;
+    e._txSolDelta = async (sig) => { asked = sig; return 0.0146; };
+    let persisted = 0;
+    e._persistBook = () => { persisted++; };
+    await e._remeasureSells();
+    assert.strictEqual(asked, 'SIG', 'the sale is asked about by its own signature');
+    assert.ok(Math.abs(row.pnlSol - 0.0046) < 1e-9, 'the row now carries the money (0.0146 in, 0.01 paid, so +0.0046), not the estimate');
+    assert.ok(Math.abs(e.books.live.pnl - 0.0046) < 1e-9, 'and the book moved with it');
+    assert.strictEqual(e.books.live.losses, 0, 'a loss that was really a win swaps sides');
+    assert.strictEqual(e.books.live.wins, 1);
+    assert.ok(persisted >= 1, 'and the correction is written to disk');
+    assert.strictEqual(e._remeasure.length, 0, 'the row is not measured twice');
+    // A node that never answers is asked a dozen times and then left alone.
+    const e2 = engine();
+    const r2 = { ts: Date.now(), symbol: 'NEVER', mint: 'NEVER', solIn: 0.01, pnlSol: -0.001, pnlPct: -10, reason: 'Stop loss', paper: false };
+    e2.history.unshift(r2);
+    e2._remeasure = [{ sig: 'S2', row: r2, soldSol: 0.01, feeBuy: 0, rentBack: 0, tries: 11, nextAt: 0 }];
+    let tries = 0;
+    e2._txSolDelta = async () => { tries++; return null; };
+    await e2._remeasureSells();
+    assert.strictEqual(tries, 1, 'it is asked once');
+    e2._remeasure[0].nextAt = 0;
+    await e2._remeasureSells();
+    assert.strictEqual(tries, 1, 'a hopeless signature is not asked for ever');
+    assert.strictEqual(e2._remeasure.length, 0, 'and is dropped');
+    assert.strictEqual(r2.pnlSol, -0.001, 'the estimate stays as it was, honestly unmeasured');
+  }
+
+  // RULES ADDED 2026-11-05, both measured on ONE live trade — $sol, bought 17:03:55 for 0.005 SOL and booked
+  // "Take profit at +301.4%" five seconds later at **-15.0%**:
+  //  • the entry price was a BOARD row while the order filled elsewhere (the log says "filled on the re-quote"), so
+  //    every percentage was measured from a price the wallet never paid;
+  //  • and because the first reading after an entry was exempt from the wild-move check, that wrong entry turned one
+  //    print into a +301% peak which fired a target into a falling coin.
+  {
+    // The fill IS the entry: 0.005 SOL bought 4000 whole tokens of a billion-supply coin = 1250 SOL market cap.
+    const e = engine();
+    const p = open(e, 'FILLpump');
+    p.mint = 'FILLpump';
+    p.paper = false; p.entryMc = 56; p.mc = 56; p.peakMc = 56; p.tokIn = 4_000_000_000n; // 4000 tokens, 6 decimals
+    e.positions.set('FILLpump', p);
+    await e._entryFromFill(p, 0.005, 0, 6);
+    assert.ok(Math.abs(p.entryMc - 1250) < 1, `the entry is the price paid, got ${p.entryMc.toFixed(1)}`);
+    assert.strictEqual(p.mc, p.entryMc, 'and the position starts at it');
+    // A mint that is not a pump.fun launch (a different supply) keeps its own price: the arithmetic assumes one
+    // billion tokens and would otherwise answer with a number wrong by the supply ratio.
+    const other = open(e, 'OTHER');
+    other.paper = false; other.entryMc = 56; other.mc = 56; other.tokIn = 4_000_000_000n;
+    e.positions.set('OTHER', other);
+    await e._entryFromFill(other, 0.005, 0, 6);
+    assert.strictEqual(other.entryMc, 56, 'a non-pump mint keeps the price it was bought on');
+    // ...and the decimals have to arrive from the balance read, or the whole thing silently does nothing - which is
+    // exactly what happened on the first live trade after this rule was written ($MGOAT, still "+414%").
+    const e3 = engine();
+    e3.wallet.keypair = { publicKey: { toBase58: () => 'OWNOUR' } };
+    e3.rpcCall = async () => ({ value: [{ account: { data: { parsed: { info: { tokenAmount: { amount: '2500000', decimals: 6, uiAmountString: '2.5' } } } } } }] });
+    const seen = {};
+    const raw = await e3._tokenBalanceRaw('M', seen);
+    assert.strictEqual(raw, 2500000n, 'the raw amount is read');
+    assert.strictEqual(seen.decimals, 6, 'and so are the decimals, which the entry price needs');
+    assert.strictEqual(seen.gone, false);
+    // A reading that is not a number at all is not this token: nothing is invented.
+    const q = open(e, 'WILD');
+    q.paper = false; q.entryMc = 56; q.mc = 56; q.tokIn = 1n;
+    await e._entryFromFill(q, 0.005, 0, 0);
+    assert.strictEqual(q.entryMc, 56, 'an impossible fill-derived price is ignored');
+  }
+  {
+    // The first print after a BOARD entry is not exempt: it must be confirmed like any other wild move.
+    const e = engine();
+    const p = open(e, 'SPIKE');
+    p.paper = false; p.entryMc = 100; p.mc = 100; p.peakMc = 100;
+    p.pxSeed = true; p.pxSource = 'entry';                    // entry read from the board
+    p.tokIn = 1000n; p.solIn = 0.01; p.feeBuy = 0; p.feeExitEst = 0;
+    e.tokens.get('SPIKE').mc = 400;                            // one print, four times the entry
+    e.tokens.get('SPIKE').lastStreamAt = Date.now();
+    e._pricePosition(p, Date.now());
+    assert.strictEqual(p.mc, 100, 'a single 4x print does not become the price');
+    // Seen twice, it does.
+    p.pxOddChain = 400;
+    e._pricePosition(p, Date.now());
+    assert.strictEqual(p.mc, 400, 'two agreeing readings are believed');
+    // RULE CHANGED 2026-11-05 (replaced "a curve entry trusts the pool about itself"): a first print 2x away from a
+    // pool-priced entry is now asked to appear twice. That exemption is what produced "$DNUT peaked at +159.3%" two
+    // seconds after the buy and "$SAFU +1142.5%"; the pool still gets the last word, one more reading later.
+    const e2 = engine();
+    const r = open(e2, 'LAUNCH');
+    r.paper = false; r.entryMc = 100; r.mc = 100; r.peakMc = 100;
+    r.pxSeed = true; r.pxSource = 'curve';
+    e2.tokens.get('LAUNCH').mc = 200;
+    e2.tokens.get('LAUNCH').lastStreamAt = Date.now();
+    e2._pricePosition(r, Date.now());
+    assert.strictEqual(r.mc, 100, 'one print doubling a pool-priced entry is not a move yet');
+    e2._pricePosition(r, Date.now());
+    assert.strictEqual(r.mc, 200, 'the second reading that agrees with it is');
+  }
+
+  // RULE ADDED 2026-11-05 (measured on $MGOAT: "peaked +414.4%" and sold at -15.2% while the coin was on its curve):
+  // a pump.fun coin also gets listed on other exchanges as a copy-cat pool with a few dollars in it, and the board
+  // hands back the row with the deepest liquidity. That price is a different market - the exit cannot fill there - so
+  // it must never become the number a position is measured at.
+  {
+    const e = engine();
+    e.market.solUsd = 150;
+    e._adopt({ mint: 'FOREIGN', source: 'launch', launched: true });
+    const t = e.tokens.get('FOREIGN');
+    t.mc = 131;
+    e._applyMarket('FOREIGN', { mint: 'FOREIGN', symbol: 'FOREIGN', dexId: 'meteora', quoteMint: WSOL, priceNative: 0.00000067, priceUsd: 0.0001, mcapUsd: 67000, liqUsd: 5, buys: 9, sells: 1 });
+    assert.strictEqual(t.mc, 131, 'a foreign pool never sets the market cap');
+    assert.strictEqual(t.ext.foreignPool, true, 'and the row is marked as another exchange');
+    // The coin's own market still does.
+    e._applyMarket('FOREIGN', { mint: 'FOREIGN', symbol: 'FOREIGN', dexId: 'pumpfun', quoteMint: WSOL, priceNative: 0.00000014, priceUsd: 0.00002, mcapUsd: 14000, liqUsd: 0, buys: 9, sells: 1 });
+    assert.ok(Math.abs(t.mc - 140) < 1, `its own curve does, got ${t.mc}`);
+    // And a position's fallback quote is never taken from the foreign row either.
+    const p = { mint: 'FOREIGN', entryMc: 131, mc: 131, solIn: 0.005, paper: false };
+    e.positions.set('FOREIGN', p);
+    e._applyMarket('FOREIGN', { mint: 'FOREIGN', symbol: 'FOREIGN', dexId: 'raydium', quoteMint: WSOL, priceNative: 0.0000033, priceUsd: 0.0005, mcapUsd: 330000, liqUsd: 9, buys: 1, sells: 1 });
+    assert.ok(!(p.pxPull > 0), 'a foreign quote does not become the position price');
+  }
+
+  // RULE ADDED 2026-11-05: a profit rule may not fire before the entry price has been settled from the fill. The
+  // correction needs one RPC round trip, and $MGOAT was sold two seconds after the buy - faster than that. A stop, the
+  // creator selling, the time limit and a lost price stay armed throughout, because those are the rules that protect
+  // money rather than count it.
+  {
+    const e = engine({ triggerHoldMs: 0 });
+    const p = open(e, 'SETTLE');
+    p.entryMc = 100; p.mc = 200; p.peakMc = 200; p.entrySettled = false;
+    e._pnlPct = () => 100;                       // a hundred percent up
+    e._sell = () => { e.soldNow = true; };
+    e._tick();
+    e._tick();
+    assert.ok(!e.soldNow, 'a target does not fire on a price the entry has not been settled against');
+    p.entrySettled = true;
+    e._tick();
+    e._tick();
+    assert.ok(e.soldNow, 'and it fires as soon as the entry is settled');
+    // The stop is not held back by the same gate.
+    const e2 = engine({ triggerHoldMs: 0 });
+    const q = open(e2, 'STOP');
+    q.entryMc = 100; q.mc = 50; q.peakMc = 100; q.entrySettled = false;
+    e2._pnlPct = () => -50;
+    e2._sell = () => { e2.soldStop = true; };
+    e2._tick();
+    e2._tick();
+    assert.ok(e2.soldStop, 'a stop still fires while the entry is being settled');
+  }
+
+  // RULE ADDED 2026-11-05: a ticket whose fees are more than a fifth of it is refused, in words, with the number to
+  // use instead. Measured live: a 0.001 SOL ticket paid 0.0004 SOL of tips per round trip (40%), every position opened
+  // at -42%, and five stops fired inside a minute. No entry can pay for that, and the desk must say so rather than lose
+  // the ticket quietly.
+  {
+    const e = engine({ buyAmountSol: 0.001, priorityFeeSol: 0.0002 });
+    e.walletBalance = 5; e._freeSol = () => 5;
+    const lines = [];
+    e._log = (level, msg) => lines.push(level + ': ' + msg);
+    const t = { mint: 'TOOCHEAP', symbol: 'TOOCHEAP', mc: 200, score: 90, status: 'watching', createdAt: Date.now() - 60000, trades: [], mcHist: [], lastActivity: Date.now(), sources: new Set(['launch']) };
+    e.tokens.set('TOOCHEAP', t);
+    e._evalOne = () => {};
+    await e._buy(t, { score: 90, m: { buyers: 20 }, pass: true });
+    assert.ok(!e.positions.has('TOOCHEAP'), 'a ticket that cannot pay its fees is not traded');
+    const line = lines.find((l) => /cannot pay its own fees/.test(l));
+    assert.ok(line, 'and the refusal is said in words');
+    assert.ok(/at least 0\.0\d+ SOL/.test(line), 'with the ticket size that would work');
+    // The same tip on a normal ticket is fine.
+    const e2 = engine({ buyAmountSol: 0.02, priorityFeeSol: 0.0002 });
+    e2.walletBalance = 5; e2._freeSol = () => 5;
+    e2._log = () => {};
+    const t2 = { mint: 'FINE', symbol: 'FINE', mc: 200, score: 90, status: 'watching', createdAt: Date.now() - 60000, trades: [], mcHist: [], lastActivity: Date.now(), sources: new Set(['launch']) };
+    e2.tokens.set('FINE', t2);
+    const market = { prices: async () => new Map(), enrich: async () => new Map() };
+    e2.market = market;
+    e2._entryPrice = async () => ({ mc: 200, src: 'curve' });
+    e2._tradeLive = async () => ({ sig: 'S', raw: null, landed: true });
+    e2._confirm = async () => ({ state: 'confirmed', err: '' });
+    e2._tokenBalanceRaw = async () => 1000n;
+    await e2._buy(t2, { score: 90, m: { buyers: 20 }, pass: true });
+    assert.ok(e2.positions.has('FINE'), 'a 0.02 SOL ticket with the same tip goes through');
+  }
+
+  // RULE ADDED 2026-11-05 (measured on $JIMOTHY: "Peak give-back (peaked at +36.7%)" booked at -5.5%): a give-back is
+  // a FLOOR. Waiting 400 ms for it to be confirmed is waiting for the floor to be gone, and on that trade the wait cost
+  // twenty points. A stop already has this exemption; now every rule whose level is a floor has it too.
+  {
+    const e = engine({ triggerHoldMs: 400, trailArmPct: 20, trailGivePct: 10, breakEvenPct: 10 });
+    assert.strictEqual(e._riskHoldMs('Peak give-back', 10, 36.7, 'quote'), 0, 'already through the level: sell now');
+    assert.ok(e._riskHoldMs('Peak give-back', 18, 36.7, 'quote') > 0, 'just at it: still confirmed');
+    assert.strictEqual(e._riskHoldMs('Break even', -8, 20, 'quote'), 0, 'a coin under water does not wait to be confirmed');
+    assert.ok(e._riskHoldMs('Break even', -1, 20, 'quote') > 0);
+    // A target that has been clearly cleared does not wait either (measured: $SMOKING peaked +36.7% and booked +4.1%
+    // because the take profit was still inside its confirmation while the coin came back down).
+    assert.strictEqual(e._riskHoldMs('Take profit', 60, 65, 'quote'), 0, 'a target five points past is sold at once');
+    assert.ok(e._riskHoldMs('Take profit', 41, 41, 'quote') > 0, 'a target just touched is still confirmed');
+    // And the resume action really lifts a pause.
+    e.pausedUntil = Date.now() + 600000; e.pauseReason = '5 losses in a row'; e.lossStreak = 5;
+    e._log = () => {};
+    const out = e.resumeEntries();
+    assert.strictEqual(e.pausedUntil, 0, 'the pause is gone');
+    assert.strictEqual(e.lossStreak, 0, 'and the streak starts again, so the same rule cannot re-pause at once');
+    assert.strictEqual(out.paused, false);
+  }
+
   console.log('Exits test passed');
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

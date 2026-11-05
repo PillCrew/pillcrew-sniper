@@ -83,7 +83,10 @@
         </header>
 
         <div class="card ready" id="readyCard"></div>
-        <div class="card banner-note" id="pauseNote" hidden></div>
+        <div class="card banner-note" id="pauseNote" hidden>
+          <span id="pauseText"></span>
+          <button class="btn" id="resumeBtn" title="Start looking for coins again right now"><svg class="ic"><use href="#i-play"/></svg><span>Resume now</span></button>
+        </div>
 
         <div class="grid cards">
           <div class="card stat"><div class="chip-ic"><svg class="ic"><use href="#i-wallet"/></svg></div><label>Balance <span class="tip" data-tip="In Practice Mode this is fake SOL. In Real Money mode it is your wallet balance.">i</span></label><b id="sBalance">0.000</b><small>SOL</small></div>
@@ -169,7 +172,7 @@
           <div class="grid three" id="profiles">
             <button class="profile" data-profile="safe"><span class="p-ic"><svg class="ic"><use href="#i-shield"/></svg></span><h3>Safe</h3><p>Fewer trades, only the strongest coins. Lower risk, lower reward.</p></button>
             <button class="profile" data-profile="balanced"><span class="p-ic"><svg class="ic"><use href="#i-gauge"/></svg></span><h3>Balanced <span class="badge">Recommended</span></h3><p>Best mix of safety and speed, with fees kept as low as they can go.</p></button>
-            <button class="profile" data-profile="aggressive"><span class="p-ic"><svg class="ic"><use href="#i-zap"/></svg></span><h3>Aggressive</h3><p>More trades, faster entries, wider risk. Can lose money quickly.</p></button>
+            <button class="profile" data-profile="aggressive"><span class="p-ic"><svg class="ic"><use href="#i-zap"/></svg></span><h3>High roller</h3><p>A big bankroll plan: bigger tickets, a 60% target against a 12% stop, six slots. Fees stop mattering at this size, so a loser is cut fast and a winner is left to run.</p></button>
           </div>
           <div class="qs-label"><span class="qs-n">2</span>How much SOL per coin?</div>
           <div class="chips" id="amountChips"></div>

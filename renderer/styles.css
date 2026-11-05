@@ -211,7 +211,11 @@ input[type=checkbox] { accent-color: var(--acc); width: 16px; height: 16px; }
 .preset-actions { display: flex; align-items: center; gap: 14px; margin: 14px 0 12px; flex-wrap: wrap; }
 .preset-list { margin: 0; padding-left: 18px; display: grid; gap: 6px; color: var(--mute); font-size: 12.5px; line-height: 1.5; }
 .preset-list b { color: #cfe9e0; font-weight: 700; }
-.banner-note { border-color: rgba(255, 190, 80, .32); background: rgba(255, 190, 80, .07); color: #ffdca0; font-size: 13px; padding: 12px 16px; }
+.banner-note { border-color: rgba(255, 190, 80, .32); background: rgba(255, 190, 80, .07); color: #ffdca0; font-size: 13px; padding: 12px 16px; display: flex; align-items: center; gap: 14px; justify-content: space-between; flex-wrap: wrap; }
+/* `display: flex` above beats the browser's own `[hidden]` rule, so the note rendered empty instead of being absent. */
+.banner-note[hidden] { display: none; }
+.banner-note .btn { flex: none; padding: 7px 13px; font-size: 12.5px; }
+.banner-note .btn .ic { width: 14px; height: 14px; }
 .toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 @media (max-width: 1050px) { .toggles { grid-template-columns: 1fr; } }
 .tgl { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); cursor: pointer; }

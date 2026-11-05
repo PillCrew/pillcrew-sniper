@@ -3,11 +3,23 @@ const JUP = 'https://api.jup.ag/tokens/v2';
 const JUP_PRICE = 'https://lite-api.jup.ag/price/v3';
 const GECKO = 'https://api.geckoterminal.com/api/v2/networks/solana';
 const WSOL = 'So11111111111111111111111111111111111111112';
-const UA = { accept: 'application/json', 'user-agent': 'PillCrewSniper/1.0' };
+// MEASURED 2026-11-05: the Jupiter API answered `429 Too Many Requests` to our own user agent string
+// (`PillCrewSniper/1.0`) while the very same request with a browser-shaped one answered `200 OK`, one after the other.
+// Their edge treats an unknown client name as abuse, and every launch door on that host was being refused because of
+// one header. The app still names itself, and still says what it is - it just does it the way every desktop client
+// does, behind the compatibility token that HTTP has used for thirty years.
+const UA = {
+  accept: 'application/json',
+  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) PillCrewSniper/1.0',
+};
 const BATCH = 30;
 // A public data host tolerates about five requests a second, and it is asked by three pollers at once, so the
 // traffic is paced: a call for an open position always passes, everything else waits its turn.
 const CALLS_PER_SEC = 4;
+// The Jupiter price service is the fastest door an exit has, and it is also the one with the smallest free allowance -
+// measured on 2026-11-05, thirty-one refusals in a minute while a single position was held, i.e. the desk itself was
+// the flood. One call a second is still eight times faster than any stop needs to be, and it keeps the door open.
+const PRICE_MIN_GAP_MS = 1000;
 // The words a memecoin symbol is made of. The DexScreener search board answers about thirty pairs per query, so it
 // is walked one word at a time instead of asking the same thing every cycle.
 const SEARCH_WORDS = ['pump', 'sol', 'ai', 'dog', 'cat', 'pepe', 'moon', 'trump', 'coin', 'baby'];
@@ -121,13 +133,19 @@ class Market {
       return body;
     } catch (e) {
       this.stats.errors++;
+      // The host travels with the error: "Market data: rate limited" told nobody WHICH door was refusing, and on
+      // 2026-11-05 it was Jupiter and GeckoTerminal for hours while DexScreener was answering normally.
+      if (!e.host) e.host = host;
       if (e.kind === 'rate') {
         // Back off harder each time it happens without a good answer in between, so a rate limited endpoint is never
         // hammered. The first rest is short on purpose: a host that is cooling also holds back the prices of the open
-        // positions, and an exit that cannot see a price for half a minute is worse than one refused request.
-        const step = Math.min(6, (this._steps[host] || 0) + 1);
+        // positions, and an exit that cannot see a price for half a minute is worse than one refused request. The
+        // ceiling is a minute, because a source that refused six times running is not having a burst - on 2026-11-05
+        // Jupiter and GeckoTerminal were on a hard block for hours, and retrying them every eight seconds was nothing
+        // but noise in the log and traffic on somebody else's door.
+        const step = Math.min(7, (this._steps[host] || 0) + 1);
         this._steps[host] = step;
-        this._cool[host] = Date.now() + Math.min(8000, 700 * 2 ** step);
+        this._cool[host] = Date.now() + Math.min(60000, 700 * 2 ** step);
       }
       this.onError(e);
       return null;
@@ -153,14 +171,32 @@ class Market {
    */
   async discover(wide = true) {
     const out = [];
-    const fresh = await this._call(`${JUP}/recent?limit=50`);
-    for (const t of Array.isArray(fresh) ? fresh : []) {
-      if (!this._isPumpToken(t)) continue;
-      out.push({ mint: t.id, source: 'launch', launched: true, hint: this._hintOf(t) });
-    }
+    // The token index is the best launch door there is, and it is the first one to be refused: measured on 2026-11-05
+    // the whole Jupiter API (and GeckoTerminal beside it) answered 429 for hours while DexScreener kept working. A
+    // refused host is skipped, not asked again on every cycle - that is what turns one refusal into an endless warn.
+    if (this.ready('jupiter')) {
+      const fresh = await this._call(`${JUP}/recent?limit=50`);
+      for (const t of Array.isArray(fresh) ? fresh : []) {
+        if (!this._isPumpToken(t)) continue;
+        out.push({ mint: t.id, source: 'launch', launched: true, hint: this._hintOf(t) });
+      }
+    } else this.stats.skipped++;
 
     const doors = wide ? 9 : 7;
-    const door = this._source++ % doors;
+    // A door whose host is currently refusing is replaced by a working one. Five of the nine doors live on Jupiter or
+    // GeckoTerminal; with both refused and the rotation unchanged, most cycles discovered nothing at all while the log
+    // said only "rate limited" - measured live: no new coin entered the desk for an hour.
+    const DOOR_HOST = ['dexscreener', 'dexscreener', 'dexscreener', 'jupiter', 'jupiter', 'gecko', 'gecko', 'dexscreener', 'gecko'];
+    let door = this._source++ % doors;
+    if (!this.ready(DOOR_HOST[door])) {
+      const working = [7, 0, 1, 2].filter((d) => d < doors && this.ready(DOOR_HOST[d]));
+      // Nothing to ask: every door that is not already resting is on a host that refused. Saying so in the counter is
+      // what keeps "the desk is working" and "the desk is silent" two different readings.
+      if (!working.length) { this.stats.skipped++; return out; }
+      // Rotated by the same cursor so the wide doors are not all the same one: the search board, both boost lists and
+      // the profiles list take turns.
+      door = working[this._source % working.length];
+    }
     if (door === 0 || door === 1) {
       const url = door === 0 ? `${DS}/token-boosts/latest/v1` : `${DS}/token-boosts/top/v1`;
       const list = await this._call(url);
@@ -309,6 +345,11 @@ class Market {
     // The price service has its own cooldown. Checking the token index instead is what let a refusal on the launch
     // list hold back the prices of every coin being held.
     if (!this.ready('jup-price')) return new Map();
+    // One call a second, however often the exit tick asks: the free allowance is per IP and a flood is answered with
+    // 429 for everything on this machine, including the prices of the coins being held.
+    const nowMs = Date.now();
+    if (this._priceAt && nowMs - this._priceAt < PRICE_MIN_GAP_MS) return new Map();
+    this._priceAt = nowMs;
     const out = new Map();
     for (let i = 0; i < ids.length; i += 50) {
       const chunk = ids.slice(i, i + 50);

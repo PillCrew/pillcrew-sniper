@@ -24,6 +24,11 @@ const SHARE_KEYS = [
 ];
 
 const PREFIX = 'PCS1.';
+// The separator a NEW code uses. A dot made the code read as a host name to X's linkifier - `PCS1.eyJ2Ijox...` looks
+// like `domain.tld` - so a shared code came back as "Blocked link" and could not be posted at all. A tilde is
+// unreserved in a URL, never appears in base64url, and no linkifier mistakes it for a domain.
+const SEP = '~';
+const PREFIX_NEW = 'PCS1' + SEP;
 
 const toB64 = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const fromB64 = (text) => Buffer.from(String(text).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
@@ -34,14 +39,14 @@ function checksum(body) {
   return (h >>> 0).toString(36).slice(-2).padStart(2, '0');
 }
 
-/** @returns {string} a code like `PCS1.eyJ2Ijox...-k3` */
+/** @returns {string} a code like `PCS1~eyJ2Ijox...~k3` - no dots, so no chat app reads it as a link */
 function encode(settings) {
   const values = SHARE_KEYS.map((k) => {
     const n = Number(settings[k]);
     return Number.isFinite(n) ? Math.round(n * 1e9) / 1e9 : 0;
   });
   const body = toB64(JSON.stringify({ v: 1, p: String(settings.profile || 'balanced'), n: values }));
-  return PREFIX + body + '.' + checksum(body);
+  return PREFIX_NEW + body + SEP + checksum(body);
 }
 
 /**
@@ -49,13 +54,16 @@ function encode(settings) {
  * @throws when the code is not one of ours, is truncated, or does not match its checksum
  */
 function decode(code) {
+  // Both separators are accepted for ever: every code posted with a dot before this change has to keep working.
   const text = String(code || '').trim();
-  if (!text.startsWith(PREFIX)) throw new Error('That is not a PillCrew settings code (it starts with PCS1.).');
-  const rest = text.slice(PREFIX.length);
-  const dot = rest.lastIndexOf('.');
-  if (dot < 1) throw new Error('That settings code looks truncated.');
-  const body = rest.slice(0, dot);
-  const sum = rest.slice(dot + 1);
+  const old = text.startsWith(PREFIX);
+  if (!old && !text.startsWith(PREFIX_NEW)) throw new Error('That is not a PillCrew settings code (it starts with PCS1).');
+  const sep = old ? '.' : SEP;
+  const rest = text.slice(PREFIX_NEW.length);
+  const cut = rest.lastIndexOf(sep);
+  if (cut < 1) throw new Error('That settings code looks truncated.');
+  const body = rest.slice(0, cut);
+  const sum = rest.slice(cut + 1);
   if (checksum(body) !== sum) throw new Error('That settings code is damaged - a character is missing or wrong.');
   let payload;
   try { payload = JSON.parse(fromB64(body).toString('utf8')); } catch (_) { throw new Error('That settings code could not be read.'); }
@@ -74,4 +82,4 @@ function describe(settings) {
   return `score ${settings.minScore}+ · ${settings.takeProfitPct}% target · ${settings.tp1Pct}%/${settings.tp1SellPct}% first rung · ${settings.stopLossPct}% stop · ${settings.maxHoldSec}s hold`;
 }
 
-module.exports = { encode, decode, describe, SHARE_KEYS, PREFIX };
+module.exports = { encode, decode, describe, SHARE_KEYS, PREFIX, PREFIX_NEW, SEP };

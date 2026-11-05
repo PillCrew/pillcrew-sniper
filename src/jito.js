@@ -38,8 +38,22 @@ class Jito {
       clearTimeout(timer);
     }
     if (r.status === 429) { this.stats.errors++; throw new Error('Jito rate limit reached.'); }
-    if (!r.ok) { this.stats.errors++; throw new Error(`Jito refused the request (HTTP ${r.status}).`); }
-    const body = await r.json().catch(() => null);
+    // Read the answer once, as text: the refusal body is the only thing that explains a 400, and a response object that
+    // only speaks JSON (a test double, an older fetch) still has to be understood here.
+    let text = '';
+    try { text = typeof r.text === 'function' ? await r.text() : JSON.stringify(await r.json()); } catch (_) { text = ''; }
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch (_) { body = null; }
+    if (!r.ok) {
+      this.stats.errors++;
+      // The block engine explains a refusal in the body - "transaction #0 could not be decoded", "bundle simulation
+      // failed", a duplicate or a stale blockhash - and a bare status code tells nobody anything. Measured against the
+      // live endpoint: the same bundle WITHOUT the encoding named answers 400 "could not be decoded", and WITH it comes
+      // back with a bundle id, so the shape here is right and a 400 is a real refusal worth reading.
+      const why = (body && body.error && (body.error.message || body.error)) || text || '';
+      const line = String(why).replace(/\s+/g, ' ').trim().slice(0, 140);
+      throw new Error(`Jito refused the request (HTTP ${r.status})${line ? ': ' + line : ''}`);
+    }
     if (!body) { this.stats.errors++; throw new Error('Jito answered with something that is not JSON.'); }
     if (body.error) {
       this.stats.errors++;
@@ -52,12 +66,24 @@ class Jito {
   /** The accounts a tip may be paid to. Jito expects the tip in the bundle, to one of its own addresses. */
   async tipAccounts() {
     if (this._tips && Date.now() - this._tipsAt < TIPS_TTL_MS) return this._tips;
-    const list = await this._post('getTipAccounts', []);
-    const tips = Array.isArray(list) ? list.filter((a) => typeof a === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a)) : [];
-    if (!tips.length) throw new Error('Jito did not name a tip account.');
-    this._tips = tips;
-    this._tipsAt = Date.now();
-    return tips;
+    try {
+      const list = await this._post('getTipAccounts', []);
+      const tips = Array.isArray(list) ? list.filter((a) => typeof a === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a)) : [];
+      if (!tips.length) throw new Error('Jito did not name a tip account.');
+      this._tips = tips;
+      this._tipsAt = Date.now();
+      return tips;
+    } catch (e) {
+      // A tip account is a stable address, so a list from an hour ago is still a valid place to pay a tip. Measured
+      // against the live engine: `getTipAccounts` answered 429 while `sendBundle` was still accepting bundles, so
+      // letting the lookup take the whole lane down for ten minutes would cost every trade in that window its
+      // second chance at landing. The list is used, and retried a minute later instead of ten.
+      if (this._tips && this._tips.length) {
+        this._tipsAt = Date.now() - TIPS_TTL_MS + 60000;
+        return this._tips;
+      }
+      throw e;
+    }
   }
 
   /** Send signed transactions as one atomic bundle. Returns the bundle id. */

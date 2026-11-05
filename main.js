@@ -59,6 +59,13 @@ const wrap = (fn) => async (_e, ...args) => {
 function openDiary(dir) {
   const folder = path.join(dir, 'logs');
   try { fs.mkdirSync(folder, { recursive: true }); } catch (_) { return () => {}; }
+  // Fourteen days of diary answers "what happened last week" and stops the folder growing for ever: measured at
+  // 3 MB on a busy day. Housekeeping only - a folder that cannot be pruned never stops a start.
+  try {
+    const keep = 14;
+    const files = fs.readdirSync(folder).filter((f) => /^pillcrew-\d{4}-\d{2}-\d{2}\.log$/.test(f)).sort();
+    for (const f of files.slice(0, Math.max(0, files.length - keep))) fs.unlinkSync(path.join(folder, f));
+  } catch (_) { /* pruning is housekeeping */ }
   const stamp = (ms) => new Date(ms).toISOString().replace('T', ' ').replace('Z', '');
   let day = '';
   let stream = null;
@@ -271,6 +278,9 @@ app.whenReady().then(() => {
   ipcMain.handle('bot:stop', wrap(async () => engine.stop()));
   ipcMain.handle('bot:sell', wrap(async (mint) => engine.sellPosition(mint)));
   ipcMain.handle('bot:sellAll', wrap(async () => engine.sellAll()));
+  // Undo a pause now instead of waiting it out. The pause itself is a rule (a cold streak, or a hand on Sell every
+  // coin); the keeper's own decision to go on is not one the app should argue with.
+  ipcMain.handle('bot:resume', wrap(async () => engine.resumeEntries()));
   ipcMain.handle('bot:resetPractice', wrap(async () => engine.resetPractice()));
 
   ipcMain.handle('reclaim:scan', wrap(async () => engine.scanWallet()));

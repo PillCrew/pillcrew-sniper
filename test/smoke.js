@@ -102,6 +102,14 @@ const { Engine, DEFAULTS } = require('../src/engine');
   store.set({ useJupiter: true });
   store.unset(['useJupiter']);
   assert.strictEqual('useJupiter' in JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8')), false);
+  // RULE CHANGED 2026-11-05: the shipped defaults are now the MEASURED profit plan (30 buyers, a 60-500 SOL band, a
+  // five minute band and 78 score), and a 30 SOL coin with six buyers is deliberately not it. This test is about the
+  // wiring - a launch arrives, is judged, is bought - so it supplies its own permissive plan.
+  store.set({
+    minScore: 0, minBuyers: 3, minNetFlowSol: 0.5, minMcSol: 10, maxMcSol: 200, minLiqUsd: 0,
+    minChange5mPct: 0, maxChange5mPct: 0, simpleMode: false, deepEntry: false, minHolders: 0,
+    takeProfitPct: 90, stopLossPct: 9, maxHoldSec: 600, buyAmountSol: 0.02,
+  });
   const e = new Engine(w, store);
   clearInterval(e._bal);
   e.refreshBalance = () => {};

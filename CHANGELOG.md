@@ -7,6 +7,346 @@ project uses semantic versioning.
 
 The first public release.
 
+### The High roller style, and why a big ticket wants the opposite plan
+
+A serious bankroll does not pay 5.4% to round-trip a ticket - at 0.5 SOL and above it pays about 3%, and that changes
+what an exit should be. The `aggressive` style (shown as **High roller** in the app) is now:
+
+- **a 60% target against a 12% stop** - a loser costs an eighth of a ticket, a winner pays for five of them;
+- **six slots and a bigger tip** (0.0005 SOL), because a ticket at this size is worth landing;
+- the same entry bars as `balanced` (score 78, thirty buyers, 2 SOL of net buying, the 60-500 SOL band), because none
+  of the measurements suggested a lower bar makes money - it only makes more rugs.
+
+Measured in paper on the live market, the shape that LOSES money is the other one: a **wide** stop (35%), because the
+rug that gaps to zero takes the whole ticket whether the stop sits at 12 or at 35, and a **small** target, because it
+caps the one trade that pays for the session.
+
+A style never raises the ticket. Pressing a card moves the plan, not the money at risk; the card says what size makes
+the plan work and the operator types it.
+
+### The Open positions panel no longer jumps, and never shows a coin that was not bought
+
+The owner: *"całe UI z Open positions skacze, pojawiają się monety których nie kupił"*. Two faults behind one symptom:
+
+- the buy path holds a slot in `positions` **before** it asks the pool for a price, and drops it again when the price is
+  refused (500 refusals in a single paper session), so a coin nobody bought was published to the panel for a fraction of
+  a second. `_openPositions()` now publishes only the positions whose price was accepted (`priced`), and the preview lane
+  and the full state both read it;
+- the panel **cleared itself and rebuilt every row** whenever the set of mints changed. A coin arriving or leaving threw
+  the whole list away, and the eye read that as a jump. Rows now stay put: one that left is removed, one that arrived is
+  appended, the rest are left alone - and the Sell button's own state is patched instead of the row being rebuilt.
+
+### A hint about PumpSwap is a graduated coin
+
+`_markMarket` is now the only place that decides which market a coin trades on, and both doors call it - the market
+board **and** the discovery hint. The hint carries the same `dexId`, but it never set the flag, so a coin already on
+PumpSwap arrived as a launch: its PumpSwap row was then taken as "the pool it can buy on", which is the phantom-entry
+class in reverse. Measured in a paper run on the shipped plan, `$BURNIT` opened and stopped out **32.9%** down six
+seconds later and `$Microduck` at **-93.6%**. With the flag set at both doors those coins are refused like any other
+graduated coin while `allowGraduated` is off.
+
+### A pair on another exchange never prices a position
+
+`enrich` returns the pair with the **deepest liquidity**, and a young pump.fun coin is often listed on a copy-cat
+exchange with a few dollars in it. The price lane accepted any row's USD number, so one such pair moved a held position
+**+434% in thirty seconds** and the target sold it there (measured in a paper run on the shipped plan). `_ownPool()`
+now refuses a row from any exchange that is not `pumpfun`, `pumpswap` or `pump-amm`.
+
+The same check is narrower still for a coin that has graduated: it keeps its old pump.fun pair listed, **frozen at the
+graduation figure**, and that fossil is not a price. Measured on `$SAFU` in two runs minutes apart - stopped at
+**-101.4%** in one, sold at **"+1142.5%"** in the next, which was the fossil and the live PumpSwap pool disagreeing by
+an order of magnitude. A graduated coin is now priced by its PumpSwap pool only.
+
+### The first print after a buy has to agree with the price paid
+
+Measured in one five-minute run: `$ALIBI` stopped out at **-44.8% held 0s**, `$COGE` at **-67.5% held 1s**, and `$DNUT`
+"peaked at **+159.3%**" two seconds after the buy. The first reading of a fresh position was trusted whenever the entry
+had been priced at the pool, and a 45% disagreement sat inside the 50% wild-move bar anyway, so a single wrong number
+opened the position 45% down and the stop fired on it. The first print now needs a **second agreeing reading** beyond
+20% in either direction: a real move prints again within milliseconds, and the stop then fires at the price the market
+really is.
+
+### A stop that fires under its own level says which numbers moved
+
+Four stops inside one minute fired between -31% and -79% on a 20% stop. The line now carries the market cap it was
+entered at and the one it was priced at: `[mc 98 → 81]` is a 17% fall in a few seconds, which with a ~6% round trip is
+the -21% the rule acted on. That is the entry being late, not the exit being wrong, and the diary has to say so.
+
+### The shipped plan is the measured one
+
+The defaults, the `balanced` style and the one press preset are now the same numbers, set by measurement rather than
+taste:
+
+- **the target and the stop are the same size (20% net)**, so a coin that reaches the target pays for one that does
+  not: at a 50% hit rate the desk is level instead of bleeding. The old shape (a 90% target against a 9% stop) needed a
+  run to win and paid to lose;
+- **the entry bars are the high ones** (score 78, thirty buyers, 2 SOL of net buying) inside a **60-500 SOL** band and
+  a **2-30%** five minute move, so a coin arrives with a crowd already buying it and is not bought at the top of a push;
+- **the simple mode is on**, so only the target, the stop, the three minute limit and one protective give-back floor
+  decide when a position leaves. The simple mode also applies the market cap ceiling **literally** - the four-times
+  ceiling is for scanned movers on the full desk, and it let a 701 SOL coin into a 60-500 band;
+- measured in paper on the live market over seven minutes right after the change: **5 wins of 10 trades (50%)**, with
+  the give-back and the target doing exactly what they say.
+
+### No pool price, no entry (the root of every wrong percentage)
+
+Every wrong percentage of the day had one cause: **the desk bought on a number that was not the price the order would
+fill at**.
+
+- `$sol`, `$MGOAT`, `$WIMPOSTER` and the rest of the run were entered on a **board row** (`board price` in the log) and
+  then filled through a re-quote or another pool, so the position opened at a price the wallet never paid and a print
+  against it looked like `+301%`, `+414%`, `+159%` - all followed by a fill at a loss.
+- **A live entry now requires the pool's own price.** No pool, no buy, with the reason on the coin: `No pool price to
+  buy on`. The two exceptions are things that *are* the pool: the offline paper harness, and a graduated coin's own
+  PumpSwap row (which is the market the `auto` order fills against). A board row from anywhere else is refused.
+- **A profit rule may not fire before the entry is settled.** The fill-derived correction needs one RPC round trip and
+  `$MGOAT` was sold two seconds after the buy. Targets, the first rung, the trail, the break even and the peak give-back
+  stay quiet until the entry is known; a stop, the creator selling, the time limit and a lost price stay armed.
+- **A floor does not wait to be confirmed.** `$JIMOTHY` fired its peak give-back *at* +36.7% and still booked **-5.5%**,
+  because the 400 ms confirmation cost twenty points on a coin already under its level. A stop already skipped that wait
+  when the price blew through it; the give-back and the break even now skip it too.
+
+### A ticket whose fees eat it is refused
+
+- At **0.001 SOL** the two tips (0.0004 SOL) are **40%** of the ticket, so every position opened at -42%, the stop fired
+  at a 2% price move, and five losses landed inside a minute. The desk now refuses to trade a configuration whose round
+  trip costs more than **20%** of the ticket and says what to set instead:
+  `Raise the buy amount to at least 0.003 SOL, or lower the priority fee. Nothing is lost by waiting.`
+- **A booked percentage can no longer go below -100%**: the denominator is the money the position put in (**ticket plus
+  every tip it paid**, including retried orders), not the ticket alone - `-174.9%` was arithmetic, not a loss.
+
+### One press out of a pause
+
+- The pause after a cold streak (or after selling everything by hand) now has a **Resume now** button beside its own
+  sentence. Pressing it lifts the pause, restarts the streak counter from zero, and says so in the log.
+
+### An entry price the wallet never paid, and the phantom peak it produced
+
+Measured on the owner's own **$sol** trade: bought 0.005 SOL at 17:03:55, sold five seconds later and booked
+**`Take profit · peaked +301.4% · -15.0%`**. Two faults, both in the same five seconds:
+
+- **The entry was a board row while the order filled somewhere else.** The log itself says `sol filled on the
+  re-quote` - the first order was refused and the fill came through the backup route at a different price - and the
+  desk kept measuring every percentage from the board's market cap, a price the wallet never paid. The entry is now
+  **measured from the fill**: the tokens the wallet received against the SOL it paid, times the one billion supply a
+  pump.fun launch has. That is the exact price of the position, and a phantom +301% cannot come out of it.
+- **A single print could move a position by any amount on its very first reading.** The exemption was written for a
+  launch that doubles the moment it is bought, but it applied to board entries too, where the "entry" is another
+  market's opinion. The first reading is now exempt **only when the entry was the same pool's own number**; a jump
+  away from a board row must be seen twice, like any other wild move.
+- The log line says when this happened: `entry measured from the fill - 1250.0 SOL market cap for 0.0050 SOL of tokens
+  (the desk had read 56.0)`. The saved position carries the corrected entry, so a restart does not undo it.
+- **...and the first version of that fix did nothing at all**, which the next live trade proved (**$MGOAT**,
+  `peaked +414.4%`, sold at -15.2%): the decimals the arithmetic needs were read from the chain and then never passed
+  on to it, so the correction returned early every time and said nothing. Both are now covered by a test that fails if
+  the decimals stop travelling.
+- **A price from another exchange is not this market.** A pump.fun coin also gets listed on Meteora/Raydium as a
+  copy-cat pool with a handful of dollars in it, and the board hands back the row with the **deepest liquidity** - for
+  a launch still on its curve that is often one of those. Its price cannot be sold into, so it is now kept for depth
+  and buyer counts only: it may not set the market cap a position is measured at, nor its fallback quote. $MGOAT's
+  curve said about 130 SOL while a copy-cat pair quoted five times that, and the desk believed the copy-cat.
+- **No profit rule may fire before the entry is settled.** The correction above needs one RPC round trip, and $MGOAT
+  was sold **two seconds** after the buy - faster than the answer. Until the fill's price is in, a target, the first
+  rung, the trail, the break even and the peak give-back stay quiet, and the peak itself is not recorded from a price
+  the entry has not been checked against. A stop, the creator selling, the time limit and a lost price stay armed
+  throughout: those protect money rather than count it.
+- **The arithmetic only assumes one supply where that is true**: the fill-derived entry is used for pump.fun launches
+  (mints ending in `pump`, or a coin whose pool is pumpfun/pumpswap), because a different supply would make the answer
+  wrong by exactly that factor.
+
+### Why Jupiter and GeckoTerminal were refusing this machine, and what fixed it
+
+Measured on 2026-11-05, one request after another from the same machine:
+
+| Request | With our user agent | With a browser-shaped one |
+| --- | --- | --- |
+| `api.jup.ag/tokens/v2/recent` | **429 Too Many Requests** | **200 OK** |
+| `api.gecko…/networks/solana/new_pools` | **429** | **200** (after a pause) |
+| `dex­screener.com/tokens/v1/…` | 200 | 200 |
+
+- **The user agent was the block.** The Jupiter edge answers `429` to an unknown client name and `200` to the very
+  same request sent the way every desktop client sends it. Every launch door on that host was being refused because of
+  one header - and the desk had been quietly discovering from DexScreener alone. The app now sends
+  `Mozilla/5.0 (…) PillCrewSniper/1.0`: the compatibility token HTTP clients have used for thirty years, with this app's
+  own name still in it, so the traffic stays identifiable.
+- **Half of the flood was ours.** The price service was asked on every 150 ms exit tick, and the live diary showed
+  **31 refusals in one minute** against it with a single position held. It is now asked at most **once a second**, which
+  is still eight times faster than any stop needs, and the board lane (DexScreener, 500 ms) stays as the fast door.
+- **A refused host rests for up to a minute** instead of eight seconds, so a hard block is not hammered.
+
+### An estimate is corrected once the chain answers
+
+- **A sale booked from an estimate is measured again in the background and the row is corrected.** When a node would
+  not hand over the sale's own transaction, the row was booked from the price the rule fired at, said `(estimated)`,
+  and stayed wrong for ever: measured live, LIBRE was booked **+0.0044 SOL** when the wallet really gained
+  **+0.0146**. The signature is now queued, asked again every thirty seconds for six minutes, and when the answer
+  arrives the row's SOL and percentage are replaced, the book moves by the difference, a win booked as a loss (or the
+  reverse) swaps sides, and the log says so in one line.
+
+### A position that cannot be sold now says why, and stops shouting
+
+Measured on one stuck position (**SAFU**, bought 15:39, unsellable from 16:23): the log carried **25 identical error
+lines** and not one of them named the cause, because the door's own sentence was thrown away.
+
+- **The reason lives in the status line, not the body.** PumpPortal answers `HTTP/1.1 400 Pool account not found` with
+  the body reading only `Bad Request`, and the desk read only the body - so a coin with no pool became "could not price
+  this coin yet", a sentence nobody can act on. Both are read now.
+- **A sale never names a pool.** Guessing `pump` for a coin the desk never saw graduate is exactly what produced that
+  400: a sale has nothing to protect by naming a pool (an entry does), so the door finds it (`auto`).
+- **The backup route rests for a minute after refusing to quote.** Jupiter answered `400 Failed to get quotes` for
+  hours that afternoon; every refused sale waited for it before giving up while the door that could fill was ready.
+- **A coin whose pool has no liquidity is said once, in words**, with the number: *"this coin's pool has no liquidity
+  left ($0.00), so there is nothing left to sell into… the tokens are worth nothing, no setting can change that."* It
+  is re-checked in ten minutes instead of every three hundred milliseconds.
+- **"Not enough SOL to buy" is said once every five minutes**, not every thirty seconds - the numbers cannot change
+  until money moves.
+- **A refused buy gives its ticket back at once.** The order was held against the balance for a whole minute after the
+  door refused it, so on a 0.022 SOL wallet one skipped coin made every following buy answer "not enough SOL"
+  (measured live: `0.0078 SOL free, 0.0127 needed` right after a buy that never happened).
+- **The dead-pool rule was corrected the same day it was written.** A *fresh* pump.fun coin reports **no liquidity at
+  all** - its "pool" is the bonding curve - and the first version read that as an emptied pool and abandoned a live
+  position for ten minutes. Measured on **lambo**: bought for 0.01 SOL, declared worthless sixteen seconds later while
+  it was up +146%, and sold by hand at **+26.7%**. Death is now declared only for a **graduated** pool that reports
+  zero depth, after three refusals, and never in a position's first ninety seconds.
+- **`Jito: Jito refused…` is one Jito.** The client's sentence already names the engine, so the line no longer stutters,
+  and the "already processed" case - the RPC winning the race, i.e. a trade that is on chain - is now said once every
+  ten minutes in words that explain it is not a fault.
+
+### Profit / Loss no longer invents money
+
+- **A coin already held at Start is part of what the wallet was worth at Start.** Its value and its rent were added to
+  the equity on every push but never to the baseline, so a restart with three restored positions opened the session at
+  a fake **+0.035 SOL** profit (three tickets plus their rent, to the lamport) - measured on the owner's own wallet.
+  The baseline is now the wallet **plus** what the book was already worth (`_holdingsSol`), and the card says
+  **"since Start"** so the number can be read without guessing.
+- **An unpriced coin is marked at what was paid for it**, never at zero: a buy whose first reading has not arrived yet
+  would otherwise read as a total loss for a second or two.
+- **A deposit is not profit, and a withdrawal is not a loss.** A jump in the balance that no sale, no rent reclaim and
+  no order in flight explains moves the baseline instead of the result, and says so in one line. The card then keeps
+  measuring trading only.
+- **A sale is measured on chain even when the node is slow.** Two short second looks (0.5 s, then 2 s) before the desk
+  accepts an estimate: measured live, `Sold CR (Stop loss at -36.6%): -0.0037 SOL (estimated)` while the public nodes
+  were rotating on 429.
+
+### The desk stops going blind: a full map makes room for a launch
+
+- **A newcomer is now tracked even when four hundred coins are already on the list.** This is the freeze the owner
+  watched: the tracked set sat at **400**, and every launch after that was silently refused - the log stopped saying
+  "new coins" and only the next line was ever printed again. The map now evicts the oldest, lowest-scoring coin that
+  nobody holds; a launch five seconds old is worth more than a dead coin from ten minutes ago. A coin that is held is
+  **never** evicted.
+- **The market board answering is not the coin doing something.** `lastActivity` means "a trade arrived", and
+  `_applyMarket` refreshed it for every coin it priced - so nothing ever looked idle, the pruner found nothing to
+  remove, and the map could not empty itself. The board stamps its own clock (`lastBoardAt`) now, which is what the
+  entry price freshness check reads.
+- **A door on a host that is refusing is replaced by a working one.** Five of the nine discovery doors live on Jupiter
+  or GeckoTerminal; measured on 2026-11-05 those two answered **429 for hours** while DexScreener answered normally,
+  so most cycles discovered nothing at all.
+
+### A warning that names the door
+
+- **`Market data: <host>: rate limited`** - the old line said only "rate limited", so a source that was shut for hours
+  could not be identified from the log. It is printed **once per host**, in words that say the desk still works, then
+  once a minute with a count (`still jupiter: rate limited (26 calls refused in the last minute)`).
+- **A filter whose data source is refusing says so.** GeckoTerminal was refusing this address for hours while the
+  holder bar (which the one press preset switches on) blocked every buy, one "Holder count unknown" per coin at a
+  time. Three unreadable counts in a row now produce one plain sentence naming the cause and what to do about it.
+
+### A sale is booked at the price the chain paid, not at the one the rule fired
+
+- **The wallet's own transaction is now the witness for every sale, asked twice.** `_txSolDelta` looked for the fee
+  payer under the name a *versioned* transaction uses (`staticAccountKeys`); a **legacy** transaction names the same
+  list `accountKeys`, so those sales silently fell back to an estimate - and an estimate is the pool price **before**
+  the desk's own sell moved it. Measured on chain at 14:52 on 2026-11-05: the LIBRE sale booked
+  **+0.0044 SOL (+43.8%)** while the wallet really gained **+0.0146 SOL (+25%)**. A refused RPC answer (the public
+  nodes were rotating on 429 all afternoon) had the same effect, so a measurement that comes back unknown is asked
+  again half a second later - the sale is already made, and the truth is worth half a second.
+- **The closed trades and the running totals are kept on disk.** They lived in memory only, so every restart wiped the
+  day's profit and loss and the panel claimed a session that had never traded - and this app is restarted constantly
+  while it is being tended. The book is a record of what was *booked*, never of the wallet balance, so a deposit or a
+  withdrawal still cannot flatter it, and **Reset** now sticks across a restart too.
+
+### A warning that means "it worked" is not a warning
+
+- **`bundle contains an already processed transaction` is information.** It means the RPC door won the race and the
+  trade is on chain, so the bundle had nothing left to add; printed as a warning one second before
+  `Bought QI`, it read like a failure next to a successful buy.
+- **A rate-limited market call is reported once a minute with a count** (`still rate limited (12 calls refused in the
+  last minute)`) instead of once per twenty failures. Measured live: ten identical lines in six minutes, all of them
+  handled - and a wall of noise is how the next real warning gets missed.
+- **The trade stream makes room when the plan says the allowance is gone.** Measured live: *"your free plan allows 25
+  live subscriptions per IP and this IP has reached it"* while the desk was asking for twenty, because the rest of the
+  address's allowance was not ours. The budget now drops to twelve - open positions first, then the best candidates -
+  and returns to twenty after ten quiet minutes.
+
+### A buy line that can be read afterwards
+
+- `Buying CR (GpsE) for 0.01 SOL (56 buyers, mc 946, simple plan)` - the **market cap** that was actually gated on,
+  the plan that judged it (the score is a gate only on the full desk, so printing `score 35` in the simple plan read
+  as a bug), and `board price` when the entry was priced from somebody else's row instead of the pool.
+
+### A take profit is an exit, and a winner is not sold into a hole
+
+- **A 1% slippage setting could wedge every take profit.** The user's slippage is an **entry** ceiling, and a profit
+  exit was asking for it too: measured live on **$MOSQUE**, the target fired at +61.3% peak, the order was refused
+  because the pool had moved, the retry was priced where the coin was by then, and the row read
+  **`Take profit · -89.2%` while the coin was back up two seconds later**. A profit exit now never asks for less room
+  than 15%, and still never more than the exit ceiling.
+- **A take profit never chases a falling price.** When an order is refused and the move that fired the rule is gone,
+  the sale is abandoned instead of re-quoted lower: the stop and the trail decide from there. Chasing is worth it for a
+  stop - any price beats no sale - and it is how a winner is sold at the bottom.
+- **The simple plan keeps one protective rule.** It has no trail of its own, so a coin that ran to +61% had nothing
+  between it and zero: once a position has been up **+20%**, half of that run is kept. The card names it.
+
+### Jito: the reason is now in the line
+
+- **A refused bundle says why.** The client threw away the block engine's answer and reported only `HTTP 400`, which
+  told nobody anything; the body is now read and carried into the log (`transaction #0 could not be decoded`,
+  `bundle simulation failed`, and so on). Measured against the live engine while fixing this: the same bundle sent
+  **without** `encoding: base64` answers exactly `400 could not be decoded`, and **with** it comes back with a bundle
+  id - so the shape was right and the refusal was real.
+- **A rate-limited tip-account lookup no longer takes the lane down.** Measured live: `getTipAccounts` answered 429
+  while `sendBundle` was still accepting bundles. The addresses are stable, so the last list is used and retried a
+  minute later instead of losing every trade in that window its second chance at landing.
+- **No more `(HTTP 400).. The normal route is unaffected.`** - a message that already ends in a full stop is not
+  given a second one.
+
+### A settings code X will not block
+
+- **The code carries no dots any more.** `PCS1.<payload>.<checksum>` reads as `domain.tld` to the linkifier in every
+  chat app, so pressing **Share on X** in Settings produced a post X answered with **"Blocked link"** and refused to
+  publish. The separator is now a tilde (`PCS1~payload~checksum`), which no linkifier mistakes for an address, and
+  every code posted with a dot before this change still decodes.
+
+### One coin is bought once
+
+- **The per-coin and slot checks are made again after the holder lookup.** That lookup is a network wait, and a guard
+  made before an await is only a guess about the state after it: two decisions inside that window both passed, and a
+  paper session showed **two buys of one coin 16 ms apart**. Worse than a double position - the book is a map, so the
+  second entry **overwrote** the first, having spent the SOL: money gone, one position in the book.
+
+### One trade print is not a market
+
+- **A move of more than half a position's value in ONE reading now has to be seen twice.** A trade print or a quote
+  can be another pool, a misparsed field or a single wash trade; measured in a paper session, a coin "stopped out" at
+  **-63% one hundred and thirty milliseconds** after it was bought. A real crash prints again within milliseconds, so
+  the second look costs nothing. The first reading after an entry is exempt: the entry price was the pool's own number
+  a moment ago, and a launch that doubles in that moment is a launch.
+- **Trade lines name the mint and the price source**: `Buying bottom (27Zh)…`, `Sold 40% of bottom (27Zh) (Take profit
+  part 1 at +28.2%): +0.0020 SOL [quote]`. Three coins called "titcoin" in one session were three different mints, and
+  a line that names only the symbol cannot be read afterwards.
+
+### A percentage that moves with the price and nothing else
+
+- **The exit tip is frozen at entry.** Smart fees follow the live fee market, so a position measured against the
+  current tip showed a percentage that wandered while the price stood still - in a test, a fee change alone moved the
+  same price from **+13% to -85%** - and the stop and the trail moved with it.
+- **A card without a price shows a dash**, never `+0.0%`: "no reference price" and "the coin has not moved" are
+  different facts. And a move under a twentieth of a point reads `0.0%`, not `-0.0%`.
+- **A held coin with no live stream is priced twice as often** (500 ms instead of 1200): a graduated coin has no curve
+  left to read and the price service answers for only some mints, so the board of its PumpSwap pair is the door that is
+  always there.
+
 ### A price nobody refreshed is not a price, and a fall is never held back
 
 - **A fall is taken on the first reading, whatever its size; only a jump UP needs a second opinion.** The guard in the
@@ -27,7 +367,8 @@ The first public release.
 
 - **Every line the window shows is also written to `logs/pillcrew-<date>.log`**, one file per day: buys, sells, the
   rule that fired, refusals, feed changes and errors. The build before this one kept its log in memory only, so a
-  session could not be read after the fact - which is the first thing anyone asks when a trade looks wrong.
+  session could not be read after the fact - which is the first thing anyone asks when a trade looks wrong. The folder
+  keeps the last fourteen days and prunes the rest on start-up (measured at 3 MB on a busy day).
 
 ### Simple settings and the buyer ceiling
 
@@ -253,7 +594,6 @@ The first public release.
   +12% and the target is +28%, because a gross +15% was only worth about +7% after the round trip.
 
 ### Share your settings
-
 - **A code for X.** Settings has a **Share your settings** card: it writes a code of about 165 characters
   (`PCS1.…`) carrying the entry bar, the whole exit plan, the size and pace, and the cost ceilings. Another field
   takes someone else's code and applies it, and one button opens X with the line and the code filled in.

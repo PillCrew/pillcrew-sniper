@@ -6,7 +6,9 @@ const settings = { ...DEFAULTS, ...AUTOPILOT, buyAmountSol: 0.02, rpcUrl: 'https
 const code = Share.encode(settings);
 
 // A code is a tweet-sized string, and it carries the policy and nothing else.
-assert.ok(code.startsWith('PCS1.'), 'the code names its format');
+assert.ok(code.startsWith(Share.PREFIX_NEW), 'the code names its format');
+// X refuses a post whose text reads as a link, and `PCS1.<base64>` reads as `domain.tld` to every linkifier there is.
+assert.ok(!code.includes('.'), 'a code carries no dot, so no chat app mistakes it for a web address');
 assert.ok(code.length < 280, `a code has to fit in a post, got ${code.length}`);
 const back = Share.decode(code);
 for (const k of Share.SHARE_KEYS) {
@@ -15,7 +17,7 @@ for (const k of Share.SHARE_KEYS) {
 assert.strictEqual(back.profile, 'balanced');
 
 // Secrets and machine state are not in the payload at all: not hidden, absent.
-const payload = JSON.parse(Buffer.from(code.slice(5).split('.')[0].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+const payload = JSON.parse(Buffer.from(code.slice(5).split(Share.SEP)[0].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
 assert.deepStrictEqual(Object.keys(payload).sort(), ['n', 'p', 'v'], 'the payload is a version, a profile and a list of numbers');
 assert.deepStrictEqual(Object.keys(back.values).sort(), [...Share.SHARE_KEYS].sort(), 'and decodes to the shared keys only');
 assert.ok(!Share.SHARE_KEYS.includes('rpcUrl'), 'an RPC URL from a stranger is never applied');
@@ -54,6 +56,24 @@ assert.match(line, /first rung/, 'and the first rung');
   assert.strictEqual(old.values.simpleMode, undefined, 'nor the simple settings switch');
   assert.strictEqual(old.values.minChange5mPct, undefined, 'nor the newer five minute floor');
   assert.strictEqual(old.values.maxChange5mPct, settings.maxChange5mPct, 'and carries everything it did carry');
+}
+
+// RULE ADDED 2026-11-05: the styles are the shipped plans, and a style must never move the money at risk. `High roller`
+// (the `aggressive` key) is the plan for a big bankroll: a 60% target against a 12% stop, six slots, a bigger tip - and
+// NOT a ticket, because pressing a card may not raise what is at stake.
+{
+  const { PROFILES } = require('../src/engine');
+  for (const [name, p] of Object.entries(PROFILES)) {
+    assert.strictEqual(p.buyAmountSol, undefined, `${name} carries no ticket`);
+  }
+  const hi = PROFILES.aggressive;
+  assert.strictEqual(hi.takeProfitPct, 60);
+  assert.strictEqual(hi.stopLossPct, 12);
+  assert.strictEqual(hi.maxPositions, 6);
+  assert.strictEqual(hi.simpleMode, true, 'the big plan runs the simple ladder too');
+  assert.ok(hi.takeProfitPct / hi.stopLossPct >= 4, 'and pays four losses with one winner');
+  const bal = PROFILES.balanced;
+  assert.strictEqual(bal.takeProfitPct, bal.stopLossPct, 'the shipped plan is symmetric: 50% wins is break-even');
 }
 
 console.log('Share tests passed');

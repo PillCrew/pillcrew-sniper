@@ -8,6 +8,7 @@ const { Market } = require('../src/market');
 const { Incinerator } = require('../src/incinerator');
 const { Store } = require('../src/store');
 const { Engine, DEFAULTS } = require('../src/engine');
+const WSOL = 'So11111111111111111111111111111111111111112';
 
 const fakeFetch = (handler) => { global.fetch = async (url, opts) => handler(url, opts || {}); };
 const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) });
@@ -85,6 +86,10 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-'));
   const wallet = { exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: { publicKey: { toBase58: () => 'W' } } };
   const store = new Store(dir, 's.json', DEFAULTS);
+  // RULE CHANGED 2026-11-05: the shipped profile now runs three positions at a time (the measured profit plan), and
+  // this harness opens one position per scenario without ever closing it. Room to spare keeps each case testing its
+  // own rule instead of the third slot filling up.
+  store.set({ maxPositions: 8, maxBuysPerMin: 60 });
   const e = new Engine(wallet, store);
   clearInterval(e._bal); clearInterval(e._ui); e.refreshBalance = () => {};
   let used = null; e._connectPortal = () => { used = 'portal'; }; e._startChain = () => { used = 'chain'; };
@@ -106,6 +111,10 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   // RULE CHANGED: confirmation now has three outcomes ('confirmed' / 'failed' / 'unknown'), because "the RPC could
   // not tell me" must never be read as "it failed".
   e._confirm = async () => ({ state: 'confirmed', err: '' }); e._tokenBalanceRaw = async () => 0n;
+  // RULE CHANGED 2026-11-05: a live entry now REQUIRES the pool's own price (`_entryPrice` refuses a board-only coin),
+  // and this harness has no node to read one from. The test is about the retry ladder, not about pricing, so the pool
+  // number is supplied directly.
+  e._entryPrice = async () => ({ mc: 40, src: 'curve' });
   const t1 = mk('M1'); await e._buy(t1, ev);
   assert.strictEqual(e.positions.size, 0); assert.strictEqual(t1.status, 'watching'); assert.ok(t1.retryAt > Date.now(), 'failed buy is retried, not abandoned');
   e._evalOne(t1, Date.now()); assert.strictEqual(e.positions.size, 0, 'retry waits for its cooldown');
@@ -136,7 +145,10 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   // Extra entry filters: the holder bar. While the switch is on, a coin under the bar is refused before any order,
   // and a coin whose holder count cannot be read is refused too - a filter that silently passes when its data
   // source is down is not a filter.
-  store.set({ deepEntry: true, minHolders: 20 });
+  // RULE CHANGED 2026-11-05: the shipped profile is the simple one, and the simple mode deliberately turns the extra
+  // entry filters off - so the holder bar is only live with the simple mode off, exactly as the app does it when the
+  // user opens those filters.
+  store.set({ simpleMode: false, deepEntry: true, minHolders: 20 });
   e.market.holders = async () => ({ holders: 7 });
   const t5 = mk('M5'); await e._buy(t5, ev);
   assert.ok(!e.positions.has('M5'), 'a coin under the holder bar is not bought');
@@ -149,6 +161,11 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   assert.match(t6.reason, /Holder count unknown/);
 
   // Once the count is known it is the evaluator that refuses the coin, with no request at all.
+  // RULE CHANGED 2026-11-05: the shipped profile is the measured plan (60-500 SOL, 30 buyers, a 78 score), and this
+  // 44 SOL coin with eight buyers is deliberately not it. What this block tests is the ORDER of the gates - a count
+  // already on the cache must refuse the coin before any other rule is consulted - so it supplies its own bars and
+  // puts the shipped ones back afterwards.
+  store.set({ minScore: 0, minBuyers: 5, minNetFlowSol: 0.5, minMcSol: 10, maxMcSol: 500, minChange5mPct: 0, maxChange5mPct: 0 });
   const nowH = Date.now();
   const t7 = mk('M7');
   t7.holders = 7;
@@ -163,7 +180,9 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   t7.holders = 40;
   assert.strictEqual(e._eval(t7, nowH).reason, 'Looks strong', 'a coin over the bar passes as before');
   assert.strictEqual(holderCalls, 0, 'the evaluator never asks for a count it already has');
-  store.set({ deepEntry: false, minHolders: 0 });
+  // The rest of this harness exercises the FULL desk (audits, dev bags, the five minute band), so it is put back on
+  // the shipped numbers with the simple mode off - the shipped default is the simple one.
+  store.set({ ...DEFAULTS, simpleMode: false, deepEntry: false, minHolders: 0 });
 
   // sell: confirmation timed out but tokens are gone -> treated as sold
   e._execLive = async () => ({ sig: 's', raw: null }); e._confirm = async () => ({ state: 'unknown', err: '' }); e._tokenBalanceRaw = async () => 0n; e._scheduleReclaim = () => {};
@@ -331,6 +350,24 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   assert.ok(wire.some((m) => m.method === 'subscribeTokenTrade'), 'the better candidates get in once the others are quiet');
   assert.strictEqual(e._subbed.size, 20, 'and the budget is still respected');
 
+  // RULE ADDED 2026-11-05: the plan itself reports the IP's allowance is gone (measured live while the app only ever
+  // asked for twenty). The desk cannot add to somebody else's budget, so it makes room for its own: the budget drops,
+  // the candidates are released, and an open position keeps its stream.
+  wire.length = 0;
+  e._onMessage(JSON.stringify({ type: 'error', message: 'your free plan allows 25 live subscriptions per IP and this IP has reached it' }));
+  assert.strictEqual(e._subBudget, 12, 'the desk shrinks its own budget when the plan reports the limit');
+  assert.ok(e._subbed.size <= 12, 'and the extra candidates are released');
+  assert.ok(e._subbed.has('POS1'), 'the open position keeps its stream');
+  assert.ok(wire.every((m) => m.keys.length > 0), 'nothing empty is sent');
+
+  // The smaller budget is temporary: ten quiet minutes later the desk asks for its usual set again, so a limit that
+  // belonged to somebody else on the same address does not leave this desk crippled for the rest of the session.
+  e._subLimitAt = Date.now() - 11 * 60 * 1000;
+  e._syncSubscriptions();
+  assert.strictEqual(e._subBudget, 20, 'the budget comes back after ten quiet minutes');
+  e._subBudget = 12;
+  e._subLimitAt = Date.now();
+
   wire.length = 0;
   e.tokens.clear(); e.positions.clear();
   e._syncSubscriptions();
@@ -369,13 +406,28 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   assert.strictEqual(e._eval(tFine, Date.now()).pass, true, 'the simple gate asks only for the band, the buyers and a price that is not falling');
   const tCrowd = simp('SIMCROWD', 6);
   assert.match(e._eval(tCrowd, Date.now()).reason, /Too many buyers \(6, cap 5\)/, 'the buyer ceiling fires in simple mode');
+  // RULE ADDED 2026-11-05 (measured: `$SAFU` peaked at +3.5% and was stopped at -101.4%, and one rug like that takes the
+  // whole session): the four checks that only REFUSE a rug-shaped coin are protection, not tuning, so they stay on in
+  // the simple plan. None of them costs a request - they read the row the entry was already judged on.
+  const tFat = simp('SIMFAT', 4);
+  tFat.ext = { at: Date.now(), devHoldPct: 60, liqUsd: 9000, buys: 4, sells: 1 };
+  assert.match(e._eval(tFat, Date.now()).reason, /Creator holds too much/, 'a creator holding most of the supply is refused in simple mode');
+  const tThin = simp('SIMTHIN', 4);
+  tThin.ext = { at: Date.now(), devHoldPct: 2, liqUsd: 300, buys: 4, sells: 1 };
+  assert.match(e._eval(tThin, Date.now()).reason, /Pool too thin/, 'a pool that cannot absorb an exit is refused too');
+  const tDom = simp('SIMDOM', 4);
+  tDom.trades = [8, 1, 1, 1].map((sol, i) => ({ ts: Date.now(), side: 'buy', sol, trader: 'whale' + (i === 0 ? '' : i) }));
+  tDom.ext = { at: Date.now(), devHoldPct: 2, liqUsd: 9000, buys: 4, sells: 1 };
+  assert.match(e._eval(tDom, Date.now()).reason, /One wallet dominates buying/, 'one wallet buying the whole tape is refused');
   store.set({ simpleMode: false });
   assert.match(e._eval(tCrowd, Date.now()).reason, /Too many buyers/, 'and the same ceiling also gates the full desk');
 
   // RULE ADDED: the exit ladder keeps only the plain rules in the simple mode - the target, the stop and the time
   // limit. The first rung, the trail and the break even are advanced rules and are off while the mode is on, exactly
   // as the panel promises.
-  store.set({ simpleMode: true, takeProfitPct: 25, tp1Pct: 12, tp1SellPct: 50, trailArmPct: 8, breakEvenPct: 5, maxHoldSec: 600 });
+  // RULE CHANGED 2026-11-05: the shipped stop is the measured plan's 20%, so this simulation names the stop it is
+  // actually testing rather than inheriting a number that moved.
+  store.set({ simpleMode: true, takeProfitPct: 25, stopLossPct: 12, tp1Pct: 12, tp1SellPct: 50, trailArmPct: 8, breakEvenPct: 5, maxHoldSec: 600 });
   e.running = false; e.tokens.clear(); e.positions.clear();
   const realPnl = e._pnlPct;
   const realSell = e._sell;
@@ -403,6 +455,128 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   e._pnlPct = realPnl; e.positions.clear(); e._sell = realSell; e._refreshFee = realFee;
   // RULE CHANGED: the settings touched above are put back exactly, so the store the rest of the suite shares is clean.
   store.set({ simpleMode: false, maxBuyers: 0, minBuyers: DEFAULTS.minBuyers, minNetFlowSol: DEFAULTS.minNetFlowSol, minMcSol: DEFAULTS.minMcSol, maxMcSol: DEFAULTS.maxMcSol, takeProfitPct: DEFAULTS.takeProfitPct, stopLossPct: DEFAULTS.stopLossPct, tp1Pct: DEFAULTS.tp1Pct, tp1SellPct: DEFAULTS.tp1SellPct, trailArmPct: DEFAULTS.trailArmPct, breakEvenPct: DEFAULTS.breakEvenPct, maxHoldSec: DEFAULTS.maxHoldSec });
+
+  // RULE ADDED 2026-11-05: a handled failure is reported once a minute with a count, not once per failure. Ten
+  // identical "rate limited" lines in six minutes on the live diary is noise, and noise is how a real warning is
+  // missed.
+  {
+    const lines = [];
+    const realLog = e._log;
+    e._marketWarnAt = 0; e._marketFailsSeen = 0; e._hostDown = {}; e._hostFails = {};
+    e._log = (level, msg) => lines.push(level + ': ' + msg);
+    e._marketError(new Error('rate limited'));
+    e._marketError(new Error('rate limited'));
+    e._marketError(new Error('rate limited'));
+    assert.strictEqual(lines.length, 1, 'the first failure is one line, and the rest are swallowed for a minute');
+    assert.match(lines[0], /rate limited/, 'the same sentence the keeper knows');
+    assert.match(lines[0], /Every other door keeps working/, 'and it says the desk is still working, not broken');
+    e._marketWarnAt = Date.now() - 61000;
+    e._marketError(new Error('rate limited'));
+    assert.strictEqual(lines.length, 2, 'a minute later the desk says it is still happening');
+    assert.match(lines[1], /3 calls refused in the last minute/, 'and says how often, so the size of it is visible');
+    e._marketWarnAt = Date.now() - 61000;
+    e._marketError(new Error('rate limited'));
+    assert.match(lines[2], /1 call refused/, 'one refusal reads as one call, not one calls');
+    // RULE ADDED 2026-11-05: the line names the door, and the count belongs to THAT door. A shared counter printed
+    // beside whichever source failed last claimed "jup-price: 28 calls" when most of them were somebody else's.
+    const withHost = Object.assign(new Error('rate limited'), { host: 'jupiter' });
+    e._marketWarnAt = Date.now() - 61000;
+    e._marketError(withHost);
+    assert.match(lines[lines.length - 1], /jupiter: rate limited/, 'the refused source is named');
+    e._marketWarnAt = Date.now();
+    e._marketError(withHost);                        // counted, not printed: inside the minute
+    e._marketWarnAt = Date.now() - 61000;
+    e._marketError(withHost);
+    assert.match(lines[lines.length - 1], /jupiter: rate limited \(2 calls refused/, 'and it counts only its own refusals');
+    e._log = realLog;
+  }
+
+  // RULE ADDED 2026-11-05: a FULL map must make room for a newcomer. Measured live: the tracked set sat at 400, the
+  // board refreshed `lastActivity` for every coin on it, the pruner therefore found nothing idle, and no new launch was
+  // ever tracked again - the desk went blind while the log kept saying how many it had "found".
+  {
+    const e2 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-room-')), 's.json', DEFAULTS));
+    clearInterval(e2._bal); clearInterval(e2._ui); e2.refreshBalance = () => {};
+    for (let i = 0; i < 400; i++) {
+      const t = { mint: 'OLD' + i, symbol: 'OLD', createdAt: Date.now() - 60000, lastActivity: Date.now(), mc: 40, mcHist: [], trades: [], status: 'watching', score: 50, reason: '', sources: new Set(['x']) };
+      e2.tokens.set(t.mint, t);
+    }
+    assert.strictEqual(e2._adopt({ mint: 'NEWCOIN', source: 'launch' }), true, 'a newcomer is tracked even when the map is full');
+    assert.ok(e2.tokens.has('NEWCOIN'), 'and it is the newcomer');
+    assert.ok(e2.tokens.size <= 400, 'while the map stays inside its cap');
+    // A coin that is actually held is never evicted to make room.
+    e2._adopt({ mint: 'HELD1', source: 'launch' });
+    e2.positions.set('HELD1', { mint: 'HELD1', symbol: 'HELD1', mc: 40, entryMc: 40 });
+    for (let i = 0; i < 400; i++) e2._adopt({ mint: 'FILL' + i, source: 'launch' });
+    assert.ok(e2.tokens.has('HELD1'), 'a held coin keeps its place');
+  }
+
+  // RULE ADDED 2026-11-05: the board answering is not the coin doing something. Refreshing `lastActivity` from the
+  // market board kept every tracked coin "alive", which is what clogged the map in the first place.
+  {
+    const e3 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-clock-')), 's.json', DEFAULTS));
+    clearInterval(e3._bal); clearInterval(e3._ui); e3.refreshBalance = () => {};
+    e3.market.solUsd = 150;
+    e3._adopt({ mint: 'CLOCK', source: 'launch' });
+    const c = e3.tokens.get('CLOCK');
+    c.lastActivity = Date.now() - 100000;                     // nothing has happened for a hundred seconds
+    c.lastStreamAt = Date.now() - 100000;
+    e3._applyMarket('CLOCK', { mint: 'CLOCK', symbol: 'CLOCK', priceNative: 0.00000004, priceUsd: 0.000004, mcapUsd: 400, dexId: 'pumpfun', quoteMint: WSOL, buys: 5, sells: 2 });
+    assert.strictEqual(c.lastActivity, Date.now() - 100000, 'the board does not pretend the coin traded');
+    assert.ok(c.lastBoardAt > 0, 'it stamps its own clock instead');
+    // RULE CHANGED 2026-11-05 (replaced "a board price counts as heard, so a young coin can still be bought"): the
+    // board is no longer a buy price at all. Every wrong percentage of the day came from entering on somebody else's
+    // number while the order filled against the pool, so a live entry now REQUIRES the pool's own price; a board-only
+    // coin is refused in words. The clock split below is still true - the board stamping its own clock is what keeps
+    // the freshness checks honest.
+    c.mc = 0;
+    c.lastActivity = 0; c.lastStreamAt = 0;
+    const px = await e3._entryPrice(c);
+    assert.ok(px && px.refuse, 'a live entry without a pool price is refused');
+    assert.match(String(px.refuse), /No pool price to buy on/);
+  }
+
+  // RULE ADDED 2026-11-05 (measured in a paper run on the shipped plan): the dex flag was only set from the market
+  // BOARD, so a coin that arrived through a discovery HINT - which carries the same `dexId` - was never marked as
+  // graduated, and its entry price then treated the PumpSwap row as a pool to buy on. $BURNIT opened and stopped out
+  // 32.9% down six seconds later, $Microduck at -93.6%. One place decides it now (`_markMarket`), at both doors.
+  {
+    const e5 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-dex-')), 's.json', DEFAULTS));
+    clearInterval(e5._bal); clearInterval(e5._ui); e5.refreshBalance = () => {};
+    e5._adopt({ mint: 'SWAP1', source: 'market', hint: { symbol: 'SW1', dexId: 'pumpswap', priceNative: 0.0000001, buys: 60, sells: 5, change5m: 10 } });
+    const g = e5.tokens.get('SWAP1');
+    assert.strictEqual(g.graduated, true, 'a hint from PumpSwap is a graduated coin from its first second');
+    assert.match(e5._eval(g, Date.now()).reason, /Graduated to PumpSwap/, 'and it is refused like any graduated coin');
+    // The board can also say the opposite, and then the flag follows it.
+    e5._applyMarket('SWAP1', { mint: 'SWAP1', symbol: 'SW1', priceNative: 0.0000001, priceUsd: 0.00001, mcapUsd: 1000, dexId: 'pumpfun', quoteMint: WSOL, buys: 30, sells: 5 });
+    assert.strictEqual(e5.tokens.get('SWAP1').graduated, false, 'a curve row clears it again');
+    // And a hint that says nothing leaves the coin a launch, which is the normal case.
+    e5._adopt({ mint: 'NOSWAP', source: 'launch', hint: { symbol: 'NS', buys: 5, sells: 1 } });
+    assert.ok(!e5.tokens.get('NOSWAP').graduated, 'a hint with no dex is not graduated');
+  }
+
+  // RULE ADDED 2026-11-05: a filter whose data source is refusing must SAY so. GeckoTerminal answered 429 for hours
+  // that day, and with the holder bar on (the one press preset switches it on) no buy could pass - the only trace was
+  // "Holder count unknown" on coin after coin.
+  {
+    const e4 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-hold-')), 's.json', DEFAULTS));
+    clearInterval(e4._bal); clearInterval(e4._ui); e4.refreshBalance = () => {};
+    const lines = [];
+    e4._log = (level, msg) => lines.push(level + ': ' + msg);
+    e4.market.holders = async () => null;                   // the pool list refuses
+    const t = { mint: 'HOLD1', holders: 0 };
+    assert.strictEqual(await e4._holdersFor(t), 0, 'an unreadable count is still unreadable');
+    assert.strictEqual(await e4._holdersFor(t), 0);
+    assert.strictEqual(lines.filter((l) => /holder bar/.test(l)).length, 0, 'one refusal is not an outage');
+    await e4._holdersFor(t);
+    assert.strictEqual(lines.filter((l) => /holder bar/.test(l)).length, 1, 'three in a row is said once, in words');
+    assert.match(lines.find((l) => /holder bar/.test(l)), /extra entry filters off/, 'with what the keeper can do');
+    await e4._holdersFor(t);
+    assert.strictEqual(lines.filter((l) => /holder bar/.test(l)).length, 1, 'and not again on the next coin');
+    e4.market.holders = async () => ({ holders: 40 });
+    assert.strictEqual(await e4._holdersFor(t), 40, 'a working source answers as before');
+    assert.strictEqual(e4._holderMisses, 0, 'and the outage counter is cleared');
+  }
 
   console.log('Modules test passed');
   process.exit(0);

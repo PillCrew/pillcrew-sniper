@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('api', {
   botStop: call('bot:stop'),
   botSell: call('bot:sell'),
   botSellAll: call('bot:sellAll'),
+  botResume: call('bot:resume'),
   resetPractice: call('bot:resetPractice'),
   scanWallet: call('reclaim:scan'),
   closeEmpty: call('reclaim:close'),

@@ -59,6 +59,14 @@ const TIP = 'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh';
       await j.tipAccounts();
       assert.strictEqual(calls, 1, 'the tip accounts are cached');
 
+      // A rate-limited lookup must not take the lane down: the addresses are stable, so the last list is still a valid
+      // place to pay a tip. Measured against the live engine: getTipAccounts answered 429 while sendBundle was fine.
+      global.fetch = async () => res(429, {});
+      j._tipsAt = Date.now() - 11 * 60 * 1000;
+      assert.deepStrictEqual(await j.tipAccounts(), [TIP], 'the list from before is used instead of failing');
+      j._tipsAt = 0; j._tips = null;
+      await assert.rejects(() => j.tipAccounts(), /rate limit/, 'and with nothing cached it is still an error');
+
       // A bundle is posted as base64 with the encoding named, and the answer is the bundle id.
       global.fetch = async (_url, opts) => {
         lastBody = JSON.parse(opts.body);
@@ -73,11 +81,20 @@ const TIP = 'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh';
       assert.strictEqual(lastBody.params[1].encoding, 'base64');
 
       // A refusal is a sentence, not a JSON blob, and it is counted.
+      const errorsBefore = j.stats.errors;
       global.fetch = async () => res(200, { jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'Bundle simulation failed' } });
       await assert.rejects(() => j.sendBundle([raw]), /Bundle simulation failed/);
-      assert.strictEqual(j.stats.errors, 1);
+      assert.strictEqual(j.stats.errors, errorsBefore + 1);
       global.fetch = async () => res(429, {});
       await assert.rejects(() => j.sendBundle([raw]), /rate limit/);
+
+      // A 400 carries the block engine's own reason, and that reason is the only thing that makes the line useful.
+      // Measured against the live endpoint: a bundle sent without `encoding: base64` answers exactly this way.
+      global.fetch = async () => ({
+        ok: false, status: 400,
+        text: async () => JSON.stringify({ jsonrpc: '2.0', error: { code: -32602, message: 'transaction #0 could not be decoded' }, id: 1 }),
+      });
+      await assert.rejects(() => j.sendBundle([raw]), /HTTP 400.*could not be decoded/);
     }
 
     // ---- the engine lane ----
@@ -132,11 +149,39 @@ const TIP = 'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh';
       const sig = await e._broadcast(signedTx());
       assert.strictEqual(sig, 'RPC_SIGNATURE', 'the normal route is untouched');
       await new Promise((r) => setTimeout(r, 30));
-      assert.ok(e.logs2.some((l) => /Jito: Jito is unreachable/.test(l)), 'and the failure is one quiet line');
-      assert.strictEqual(e.logs2.filter((l) => /Jito:/.test(l)).length, 1, 'said once, not once per trade');
+      assert.ok(e.logs2.some((l) => /Jito is unreachable/.test(l)), 'and the failure is one quiet line');
+      assert.ok(!e.logs2.some((l) => /\.\. The normal route/.test(l)), 'and it does not end in two full stops');
+      assert.strictEqual(e.logs2.filter((l) => /Jito is unreachable/.test(l)).length, 1, 'said once, not once per trade');
       await e._broadcast(signedTx());
       await new Promise((r) => setTimeout(r, 30));
-      assert.strictEqual(e.logs2.filter((l) => /Jito:/.test(l)).length, 1, 'and not again inside a minute');
+      assert.strictEqual(e.logs2.filter((l) => /Jito is unreachable/.test(l)).length, 1, 'and not again inside a minute');
+    }
+
+    // RULE ADDED 2026-11-05: "bundle contains an already processed transaction" is not a fault and not Jito being
+    // unwell - it means the RPC door won the race and the trade is on chain. Measured live at 14:44:26, one second
+    // before "Bought QI": a warning line that reads like a failure next to a successful buy.
+    {
+      const e = engine({ useJito: true });
+      e.jito = {
+        tipAccounts: async () => [TIP],
+        sendBundle: async () => { throw new Error('Jito refused the request (HTTP 400): bundle contains an already processed transaction'); },
+      };
+      assert.strictEqual(await e._jitoLane(signedTx()), false, 'the lane reports it did not carry the trade');
+      const line = e.logs2.find((l) => /already processed/.test(l));
+      assert.ok(line && line.startsWith('info:'), 'a trade that is already on chain is information, not a warning');
+      assert.ok(/^info: Jito refused the request/.test(line), 'and the name is not said twice (Jito: Jito refused…)');
+      assert.ok(/not a fault/.test(line), 'the line says what it means');
+      // Once per ten minutes: the trade path offers every order to both doors at once, and the RPC usually wins.
+      e._jitoDupAt = Date.now() - 5000;
+      await e._jitoLane(signedTx());
+      assert.strictEqual(e.logs2.filter((l) => /already processed/.test(l)).length, 1, 'not repeated inside ten minutes');
+      // A real refusal is still a warning, and still names the engine only once.
+      const w = engine({ useJito: true });
+      w.jito = { tipAccounts: async () => [TIP], sendBundle: async () => { throw new Error('Bundle simulation failed'); } };
+      await w._jitoLane(signedTx());
+      const warn = w.logs2.find((l) => /simulation failed/.test(l));
+      assert.ok(warn && warn.startsWith('warn:'), 'a genuine refusal keeps its warning');
+      assert.ok(/^warn: Jito: Bundle simulation failed/.test(warn), 'and is prefixed once');
     }
 
     console.log('Jito tests passed');

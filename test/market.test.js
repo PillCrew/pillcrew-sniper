@@ -193,6 +193,29 @@ const pair = (m, extra = {}) => ({
       assert.ok(Math.abs(px.get(mint('P')).priceUsd - 1.5) < 1e-9, 'and the price of the held coin comes back');
       assert.strictEqual(fresh.ready('jup-price'), true, 'the price host kept working while the index was resting');
       assert.strictEqual(fresh.ready('jupiter'), false, 'and the index cooldown never touched it');
+      // RULE ADDED 2026-11-05: one price call a second, however often the 150 ms exit tick asks. Measured live: 31
+      // refusals in one minute against the price service with a single position held - the desk was the flood, and a
+      // 429 there is answered by refusing the prices of every coin on the machine.
+      priceCalls = 0;
+      await fresh.prices([mint('P')]);
+      await fresh.prices([mint('P')]);
+      await fresh.prices([mint('P')]);
+      assert.strictEqual(priceCalls, 0, 'a second call inside the same second is not sent at all');
+      fresh._priceAt = Date.now() - 1500;
+      await fresh.prices([mint('P')]);
+      assert.strictEqual(priceCalls, 1, 'and the next second is asked once');
+    }
+
+    // The user agent is the header that was getting every Jupiter door refused: `PillCrewSniper/1.0` answered 429
+    // while a browser-shaped string answered 200 for the same request, one after the other.
+    {
+      const seen = [];
+      global.fetch = async (url, init) => { seen.push(String((init && init.headers && init.headers['user-agent']) || '')); return res(200, {}); };
+      const m = new Market();
+      await m.discover();
+      assert.ok(seen.length > 0, 'a door was asked');
+      assert.ok(seen.every((ua) => /Mozilla\/5\.0/.test(ua)), 'every request carries the browser-shaped token');
+      assert.ok(seen.every((ua) => /PillCrewSniper/.test(ua)), 'and still names this app, so the traffic is identifiable');
     }
 
     const best = readPair({ ...pair('m1', { liquidity: { usd: 10 } }) });
@@ -213,7 +236,28 @@ const pair = (m, extra = {}) => ({
       assert.strictEqual(await m.holders(mint('H')), null, 'a host that answers nothing is unknown, not zero');
     }
 
-    console.log('Market test passed');
+    // RULE ADDED 2026-11-05: a door on a host that is refusing is replaced by a working one. Measured live: five of the
+  // nine discovery doors live on Jupiter or GeckoTerminal, both of which answered 429 for hours while DexScreener was
+  // fine - and most cycles discovered nothing at all.
+  {
+    const m = new Market({ onError: () => {} });
+    const asked = [];
+    global.fetch = async (url) => {
+      asked.push(String(url));
+      return String(url).includes('jup.ag') || String(url).includes('geckoterminal') ? res(429, {}) : res(200, { pairs: [], data: [] });
+    };
+    // Both of those hosts refused a moment ago, which is the state that lasted for hours on 2026-11-05.
+    m._cool.jupiter = Date.now() + 60000;
+    m._cool.gecko = Date.now() + 60000;
+    for (let i = 0; i < 6; i++) await m.discover(true);
+    const hosts = asked.map((u) => (u.includes('dexscreener') ? 'dexscreener' : u.includes('gecko') ? 'gecko' : 'jupiter'));
+    assert.ok(!hosts.includes('jupiter'), 'a refused index is not asked again');
+    assert.ok(!hosts.includes('gecko'), 'and neither is a refused pool list');
+    assert.ok(hosts.length >= 4, 'while every cycle still discovers from a door that answers');
+    assert.ok(hosts.every((h) => h === 'dexscreener'), 'and only from those');
+  }
+
+  console.log('Market test passed');
     process.exit(0);
   } finally {
     global.fetch = Market.prototype._origFetch;

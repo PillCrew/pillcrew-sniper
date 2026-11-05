@@ -18,20 +18,49 @@ plus both priority tips, which at a 0.004 SOL ticket is about 13% of the ticket 
 That is the number the cards show and the number the rules act on, so "+12%" means the trade is really 12%
 ahead, not 12% before it paid for itself. See [Why the percentages are net](#why-the-percentages-are-net).
 
-| Setting | Safe | Balanced | Aggressive |
+| Setting | Safe | Balanced (the shipped plan) | High roller |
 | --- | --- | --- | --- |
-| Minimum score | 70 | 64 | 50 |
-| Buyers needed (20 second window) | 6 | 6 | 4 |
-| Net buying needed (SOL) | 2 | 1.5 | 0.8 |
-| Market cap band (SOL) | 20 to 80 | 20 to 150 | 15 to 250 |
-| Take profit (%) | 60 | 90 | 150 |
-| First take profit (%) / how much | 18 / 50 | 22 / 40 | 30 / 30 |
-| Stop loss (%) | 6 | 9 | 12 |
-| Max hold (seconds) | 150 | 200 | 300 |
-| Trailing stop arms at / gives back (%) | 14 / 8 | 18 / 12 | 22 / 15 |
+| Minimum score | 70 | 78 | 78 |
+| Buyers needed (20 second window) | 6 | 30 | 30 |
+| Net buying needed (SOL) | 2 | 2 | 2 |
+| Market cap band (SOL) | 20 to 80 | 60 to 500 | 60 to 500 |
+| Take profit (%) | 60 | 20 | 60 |
+| First take profit (%) / how much | 18 / 50 | off / off | off / off |
+| Stop loss (%) | 6 | 20 | 12 |
+| Max hold (seconds) | 150 | 180 | 240 |
+| Trailing stop arms at / gives back (%) | 14 / 8 | off / off | off / off |
 | Break even after a peak of (%) | off | off | off |
-| Slippage ceiling (%) | 8 | 10 | 15 |
-| Priority fee ceiling (SOL) | 0.0002 | 0.0002 | 0.0006 |
+| Slippage ceiling (%) | 8 | 15 | 15 |
+| Priority fee ceiling (SOL) | 0.0002 | 0.0002 | 0.0005 |
+| Coins held at once | 1 | 3 | 6 |
+
+**The High roller style is the plan for a serious bankroll, and it is the mirror image of Balanced.** At a big
+ticket the round trip costs about 3% of it instead of 5.4%, so a loss can be cut cheaply and a winner can be
+left to run: a 12% stop costs an eighth of a ticket and a 60% target pays for five of them. Measured in paper
+on the live market, the shape that loses money is the opposite one - a **wide** stop, because the rug that
+gaps to zero takes the whole ticket whether the stop sits at 12 or at 35, and a **small** target, because it
+caps the one trade that pays for the day. A style never raises the ticket: a press of a card must not move
+the money at risk. At 0.5 SOL a ticket and above the fees stop mattering and this plan is the one to run.
+
+**Balanced is the measured plan, and it is the same size in both directions.** The target and the stop are
+both 20% *net*, so a coin that reaches the target pays for one that does not: at a 50% hit rate the desk is
+level, and above it the desk is ahead. The shape it replaced - a 90% target against a 9% stop, then a 130%
+target against the same stop - needed a run to win and paid to lose, and three measured paper sessions on
+the live market produced 28% wins over eighteen trades. A 20/20 pair is also the only shape a keyless build
+can honour: the exits are urgent (a stop is never held waiting for a second opinion) and a target that is
+twenty points away is reachable inside a three minute hold.
+
+**Balanced ships with the simple mode on**, so only the target, the stop, the time limit and one
+give-back floor decide when a position leaves. That is deliberate: the first rung, the trail and the break
+even are exactly the rules that a small ticket cannot afford to test one at a time, and on a three minute
+window there is no time for a runner to develop. The give-back floor is the one protective rule that stays,
+because a coin that peaked at +61% and closed at -89% is the whole session's loss.
+
+**Four checks stay on in the simple mode even though they are filters**, because they only ever *refuse* a
+coin and never cost a request: the creator's bag (`maxDevHoldPct`, `maxDevBuySol`), one wallet buying the
+whole tape (`maxTraderSharePct`) and a pool too thin to absorb an exit (`minLiqUsd`). They read the row the
+entry was judged on anyway. Measured: one rug (`$SAFU`, peaked at +3.5%, stopped at **-101.4%**) took a whole
+session, and a coin whose creator holds most of the supply is the coin that does that.
 
 No style carries a break-even rule any more, and that is a correction rather than a simplification. At a net
 zero the trade has paid its costs and earned nothing, the fill lands under the reading that triggered it, and
@@ -76,34 +105,33 @@ a moment for.
 ## One press preset
 
 The Settings screen has a single button that applies a tuned set of numbers. It is meant for a small wallet
-on a busy chain, and every value it writes can still be edited by hand afterwards. It is a one-slot,
-patient desk on purpose: a small wallet pays most of its costs in fixed tips, so it trades less, banks a
-part of a winner early, and lets the rest run.
+on a busy chain, and every value it writes can still be edited by hand afterwards. It applies the **same
+plan the app ships with** (the `balanced` style with the simple mode on), so a press of the button and a
+fresh install cannot disagree.
 
 | Key | Value | Why |
 | --- | --- | --- |
-| `minScore` | 68 | Strong enough to act on, not so strong that nothing passes |
-| `minBuyers` | 8 | Eight wallets in the window, or sixteen buys over five minutes for a scanned coin |
+| `simpleMode` | on | Only the target, the stop, the time limit and the give-back floor decide when a position leaves. Everything else is still computed and shown, it just does not gate anything |
+| `minScore` | 78 | A coin should arrive with a crowd already buying it |
+| `minBuyers` | 30 | Thirty wallets in the window (sixty buys over five minutes for a scanned coin) |
 | `minNetFlowSol` | 2 | Demand has to beat supply by a real amount, not by noise |
-| `minMcSol` / `maxMcSol` | 20 / 150 | The band where a small ticket still moves |
-| `minLiqUsd` | 2000 | A pool that can absorb an exit without gapping |
-| `maxChange5mPct` | 35 | Skip a coin already up 35% in five minutes: that is somebody else's exit. Measured in paper, entries bought under the old ceiling of 120% were all bought near their top and every one of them stopped out |
-| `minChange5mPct` | 4 | The floor of the same band: a launch that has not moved yet is where a move starts. A coin only 2% up with real demand is early; a coin 60% up is late |
-| `deepEntry` | on | The extra entry filters switch. While on, the holder bar below is enforced and a coin whose holder count cannot be read is skipped too - a filter that silently passes when its data source is down is not a filter |
-| `minHolders` | 25 | A coin needs this many holders to be bought. Distribution is the slow signal that separates a coin people are in from a coin only its creator is in |
+| `minMcSol` / `maxMcSol` | 60 / 500 | The band where a twenty point move is still possible. The simple mode applies the ceiling literally - the four-times ceiling is for scanned movers on the full desk |
+| `minLiqUsd` | 4000 | A pool that can absorb an exit without gapping |
+| `maxChange5mPct` | 30 | Skip a coin already up 30% in five minutes: that is somebody else's exit. Measured in paper, entries bought under the old ceiling of 120% were all bought near their top and every one of them stopped out |
+| `minChange5mPct` | 2 | The floor of the same band: a launch that has not moved yet is where a move starts |
+| `deepEntry` / `minHolders` | off / 0 | The holder bar is an advanced filter, and the simple mode turns advanced filters off (a count that cannot be read refuses every coin, which happened for hours on 2026-11-05) |
 | `maxDevHoldPct` / `maxDevBuySol` | 30 / 3 | No coin where the creator kept a third of the supply |
-| `tp1Pct` / `tp1SellPct` | 18 / 70 | Bank 70% at the first real move. Measured over several sessions, a coin that reaches +20% comes back more often than it runs, and a smaller first rung cannot pay for a ten-point loss |
-| `takeProfitPct` | 130 | Only a moon shot is closed on a fixed target; everything else is closed by the trail |
-| `trailArmPct` / `trailGivePct` | 12 / 8 | The peak starts being tracked at +12%, and the runner is trailed by **45% of its own peak**, with 8 points as the floor |
+| `tp1Pct` / `tp1SellPct` | 0 / 0 | No first rung: on a three minute window a partial exit leaves the rest of the ticket to give everything back |
+| `takeProfitPct` | 20 | The target, the same size as the stop |
+| `trailArmPct` / `trailGivePct` | 0 / 0 | No trail in the simple plan (the give-back floor below does the job a trail would, without a second ladder) |
 | `breakEvenPct` | 0 | Off. It would sell at the cost of the trade, which is a booked loss |
-| `stopLossPct` | 9 | Tight enough that a losing ticket costs one ticket, not two |
-| `maxHoldSec` | 240 | A runner needs minutes, not seconds; a coin that does nothing still leaves on the trail or the stop |
-| `triggerHoldMs` | 400 | A take profit has to hold this long before it sells: a spike that is gone in one tick is not a signal. Stops and trails do not wait for it (see below) |
-| `slippagePct` | 12 | A ceiling that still lands on a busy chain |
+| `stopLossPct` | 20 | One ticket of risk, the same size as the target |
+| `maxHoldSec` | 180 | Three minutes: a coin that has not paid by then is not going to |
+| `triggerHoldMs` | 400 | A take profit has to hold this long before it sells: a spike that is gone in one tick is not a signal. Stops, trails and the give-back do not wait for it (see below) |
+| `slippagePct` | 15 | A ceiling that still lands on a busy chain |
 | `priorityFeeSol` | 0.0002 | The cheapest tip that is not ignored |
-| `maxPositions` | 1 | One slot: every ticket gets the whole attention and the fees stay predictable |
-| `maxBuysPerMin` | 10 | Ten entries a minute is already faster than the plan can close them |
-| `watchSec` / `entryWindowSec` | 3 / 45 | Watch briefly, then treat a coin as trending rather than new |
+| `maxPositions` | 3 | Three slots: enough to see a session's worth of signals, few enough that one bad coin is a third of the book |
+| `maxBuysPerMin` | 20 | An entry cap, not a target |
 | `maxLossStreak` / `pauseMinutes` | 5 / 8 | A cold streak is the market telling you something; sit it out |
 | `sessionLossLimitSol` | 8 tickets | Not a fixed number: the cap is eight tickets, clamped to 0.01-0.35 SOL |
 
@@ -116,7 +144,14 @@ cap itself is rewritten as **eight tickets** (0.032 SOL at a 0.004 SOL ticket, 0
 
 Practice money and real money keep separate books. Profit and loss, win rate and closed trades are
 counted per book, and each can be reset on its own in Settings. Resetting clears the numbers and the
-closed trades of that book; open positions are left alone and nothing on chain is touched.
+closed trades of that book; open positions are left alone and nothing on chain is touched. Both books are
+written to `settings.json` (`bookHistory`, `books`), so they survive a restart, and a Reset stays reset.
+
+**Profit / Loss in Real Money is the wallet, and it is measured as money**: what the wallet holds plus what
+the open coins are worth at their current price (and the rent their accounts hold), against the same sum at
+Start. The card says **since Start** for that reason. Coins already held when the bot starts are counted on
+both sides, so a restart never opens with a profit that was already there, and SOL added to or taken from the
+wallet moves the baseline instead of the result: the number only ever measures trading.
 
 ## Trading
 
@@ -185,7 +220,14 @@ numbers, and only those numbers decide:
 | `maxHoldSec` | Sell if nothing happened by then |
 
 Every advanced rule is off while the mode is on: the score bar, the net flow, the depth, the creator
-bags, the five minute band, the holder bar, the first rung, the trail and the break even. The safety
+bags, the five minute band, the holder bar, the first rung, the trail and the break even. **One protective
+rule stays**, because it is not an advanced setting but the difference between a winner and a wipeout: once
+a position has been up **+20%**, half of that run is kept (`Peak give-back`). A coin that reached +61% and
+gives back more than half is closed at about +30% instead of being allowed to return to nothing.
+
+A take profit is an exit even though it is not urgent: it never asks for less room than 15%, whatever the
+slippage ceiling says, and it never re-quotes itself lower after a refusal. Chasing a falling price is how a
+`+70%` row is printed as `-89%`. The safety
 protections never turn off in either mode - a coin whose creator sold is not bought, a graduated coin is
 not bought, and a position still has to close.
 
@@ -202,8 +244,8 @@ it was.
 | `maxDevBuySol` | 3 | Skip coins where the creator bought more than this at launch |
 | `maxDevHoldPct` | 35 | Skip coins where the creator still holds this share of the supply, read from the token audit. `0` turns it off |
 | `maxTraderSharePct` | 45 | Skip coins where one wallet is this share of recent buying |
-| `maxChange5mPct` | off | Skip a coin that is already up more than this over five minutes. Buying a coin that has run is buying somebody else's exit. The one press preset turns it on at 35 |
-| `minChange5mPct` | off | The floor of the same band: skip a coin that has barely moved in five minutes. The preset asks for 4%, so a launch is joined while it is starting rather than after it has run |
+| `maxChange5mPct` | 30 | Skip a coin that is already up more than this over five minutes. Buying a coin that has run is buying somebody else's exit. `0` switches the ceiling off, and the full desk widens it for scanned movers |
+| `minChange5mPct` | 2 | The floor of the same band: skip a coin that has barely moved in five minutes, so a launch is joined while it is starting rather than after it has run |
 | `deepEntry` | off | The extra entry filters switch: a minimum number of holders and the market cap band, in one panel below the number form. While on, a coin under the holder bar is skipped, and so is a coin whose holder count cannot be read |
 | `minHolders` | 0 | The holder bar. Read from the live market at the moment of buying, cached for ten minutes |
 | `simpleMode` | off | Simple settings: only the basic numbers decide (see below), and every advanced rule is off |
@@ -225,15 +267,25 @@ is set, PumpPortal otherwise. All three work. The trade stream only changes how 
 | `useJito` | Off by default. Offers every signed trade to Jito's block engine as a bundle as well |
 | `jitoTipSol` | The bundle tip, 0.0001 SOL by default. Only paid when the bundle lands, never counted as a fee when it does not |
 
+**What `useJito` really does.** The same signed transaction goes to the RPC doors **and** to the block engine in the
+same instant: the bundle either lands whole (trade and tip together) or not at all, and the RPC send is never given up
+in exchange. Because the RPC is normally the faster of the two, the engine usually answers `bundle contains an already
+processed transaction` - which means **the trade is already on chain**, not that anything failed, and the tip is not
+paid. So Jito is a free hedge for a congested slot, not a faster route: a measured day on one wallet was 34 bundles,
+9 lost races, 2 refusals that were logged, and no tip spent on a lost race. If it is switched off nothing else changes.
+
 Jupiter needs no key: the swap route and the price service the bot falls back to answer without one. The
 price service is polled at 150 ms, and only for a coin whose trade stream has gone quiet.
 
 ## Sharing a setup
 
-Settings has a **Share your settings** card. It writes a code of about 165 characters, `PCS1.<payload>.<checksum>`,
+Settings has a **Share your settings** card. It writes a code of about 180 characters, `PCS1~<payload>~<checksum>`,
 that carries the `SHARE_KEYS` list from `src/share.js`: the entry bar, the whole exit plan, the size and the pace,
 and the cost ceilings. Another field applies a code somebody posted, and one button opens X with the line and the
 code filled in.
+
+The code carries **no dots on purpose**: `PCS1.<payload>` reads as `domain.tld` to the linkifier in every chat app,
+and X answered a post containing one with "Blocked link". Codes written with a dot before this change still decode.
 
 The payload is `{v, p, n}` - a format version, a style name and the numbers - so a code cannot carry an API key, an
 RPC URL, a wallet, the mode, or an open position. The checksum refuses a mistyped or truncated code, applying a code
@@ -243,8 +295,11 @@ is refused while the bot runs, and the ticket on your machine is only replaced w
 
 | File | Contents |
 | --- | --- |
-| `settings.json` | Everything above |
+| `settings.json` | Everything above, plus the open positions and the closed-trade book |
 | `wallet.json` | Encrypted key, never leaves the machine |
-| `logs/` | Chromium logs, safe to delete |
+| `logs/pillcrew-<date>.log` | The day's diary: every line the window shows |
+| `logs/` (the rest) | Chromium logs, safe to delete |
 
-The app keeps no database. Trade history lives in memory for the session and is shown in the app.
+The app keeps no database. The closed trades and the running totals live in `settings.json` (`bookHistory` and
+`books`), so they survive a restart; **Reset** clears one book and that clearing survives a restart too. The book is a
+record of what was booked, never of the wallet balance, so a deposit or a withdrawal does not move it.
