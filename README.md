@@ -348,7 +348,8 @@ app allowed in Security settings. A certificate removes both; `docs/BUILD.md` sa
 npm test
 ```
 
-Eleven suites: RPC failover and its time budgets, the on-chain decoder, the engine trade cycle and the
+Eleven suites: RPC failover and its time budgets, the on-chain decoder, a smoke pass over the defaults,
+the engine trade cycle and the
 feed wiring (build retries, late landings, the Jupiter backup), the market scanner and its doors, the
 exit rules and the statistics books, the guards around foreign transactions,
 the wallet and selling everything (adoption, sell-all, one holding, the start gate), the settings code,

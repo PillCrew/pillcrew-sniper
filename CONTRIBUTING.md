@@ -1,6 +1,6 @@
 # Contributing
 
-This is a private project. The notes below are for whoever works on it.
+PillCrew Sniper is open source (MIT). The notes below are for anyone who wants to work on it.
 
 ## Ground rules
 

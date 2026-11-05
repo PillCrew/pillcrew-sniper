@@ -60,7 +60,8 @@ The first public release.
   `maxHoldSec` cannot be set to 0 - which does not turn the time limit off, it sells every coin the moment it is bought.
 - **Codes shared before a setting existed keep working**: the payload is a positional list and new settings are only
   appended, so a shorter list is an older code rather than a damaged one. Every code already posted on X still applies.
-- **A closed trade records why the coin was taken** (`score`, `ch5`, `buyers`) beside what it did.
+- **A closed trade records why the coin was taken** - its score, buyer count and the five-minute picture - beside
+  what it did.
 
 ### The entry was blind, and that is where the win rate went
 
@@ -102,11 +103,11 @@ The first public release.
   needs. Measured in paper against the live market, every profit rule in a session closed between **+6% and +12%**
   while the losses filled at **-21% to -33%**. That is a desk whose winners cannot pay for its losers, and no entry
   rule can rescue it. A coin up 100% wobbles 15-20 points without changing trend.
-- **The preset's exit shape was rewritten for that arithmetic**: 40% banked at +22%, the rest a runner closed by the
-  proportional trail (arm +18%, floor 12 points) or a +130% moon target, stop 9%, hold 240 s.
-- **The entry ceiling came down: skip a coin already up 60% in five minutes** (was 120%). Four entries measured in
-  paper under the old ceiling were all bought near their top and every one of them stopped out; the bars are now
-  score 68 and eight buyers, not 64 and six.
+- **The preset's exit shape was rewritten for that arithmetic**: 70% banked at +18%, the rest a runner closed by the
+  proportional trail (arm +12%, floor 8 points) or a +130% moon target, stop 9%, hold 240 s.
+- **The entry ceiling came down: skip a coin already up 35% in five minutes** (was 120%, briefly 60%). Four entries
+  measured in paper under the old ceiling were all bought near their top and every one of them stopped out; the bars
+  are now score 68 and eight buyers, not 64 and six.
 - **A closed trade keeps what it was worth at best**: the row carries `heldSec`, `peakPct` (the best net move while
   it was held), `firedPct` (the move that fired the rule) and the price source, and the window prints
   `peaked +41% · held 2m` beside the fill. A trade that peaked at +41% and filled at +8% is an exit that was too
@@ -129,9 +130,10 @@ The first public release.
 - **The styles were rewritten around that cost**: take profit 18-45%, first rung 10-15% for half the position, stop
   7-15%, trail arms 6-12% and gives back 3-6%, hold 60-100 s. The exit ranges working snipers converge on, expressed
   in net numbers.
-- **The one press preset is a patient one-slot desk**: score 64+, six buyers, +1.5 SOL net buying, pool 2000 USD+,
-  skip a coin already up 120% in five minutes, half banked at +12%, the rest to +28%, trail 8/4, stop 10%, hold 75 s,
-  ten buys a minute, a ten-minute rest after four losses.
+- **The one press preset is a patient one-slot desk** (the final numbers are in the exit-shape section above and in
+  `docs/SETTINGS.md`): score 68+, eight buyers, +2 SOL net buying, pool 2000 USD+, the 4-35% five-minute band,
+  70% banked at +18%, the rest to +130% or the proportional trail, stop 9%, hold 240 s, ten buys a minute, an
+  eight-minute rest after five losses.
 - **The session cap follows the ticket instead of being a fixed number.** A flat 0.35 SOL was eighty-seven trades at
   a 0.004 SOL ticket - a countdown, not a limit. The preset now writes **eight tickets** (clamped to 0.01-0.35 SOL),
   and a ticket bigger than a third of the cap is lowered to that third.
@@ -275,9 +277,10 @@ The first public release.
 - **The Jupiter API key setting is gone**: the route and the price service need no key, so the field was an option
   that changed nothing.
 
-## 1.0.0
+## Pre-release development
 
-First release.
+Notes written while the build that became [1.0.0] was in progress. The release itself is documented at
+the top; where an early note below says something the release changed, the top wins.
 
 ### Trading
 
@@ -291,8 +294,8 @@ First release.
   wallet concentration and token flags.
 - Exits: take profit, trailing stop after the coin runs, stop loss, creator sold, time limit, and an
   optional first partial take profit that sells part of the position and lets the rest run.
-- An optional break even rule, on in the preset: once a coin has been up a real amount, it is never
-  allowed to become a loss.
+- An optional break even rule that was later turned off everywhere before the release: at a net zero the
+  rule sells at the round trip's own cost, and the trailing stop protects a winner better.
 - Smart fees follow the live fee market and widen slippage when an exit must land.
 - A refused order is answered by the backup route, not by the same door again. Measured on chain, the
   chain refuses a fresh buy with `6002` when the price ran between the quote and the landing, and the
