@@ -753,6 +753,25 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     assert.ok(Math.abs(p.mc - 300) < 1, `two quote readings that agree become the price, got ${p.mc}`);
   }
 
+  // A position restored while a session is being set up must not be sold before any feed has answered: its price
+  // clock starts when it enters this session's book, not when it was bought. Sixty seconds after a restart there is
+  // still nothing to price it with, and the old rule ("no price for forty-five seconds") would sell it blind.
+  {
+    const e = engine();                              // maxHoldSec 600, so the time limit is not what fires here
+    let sold = false;
+    e._tradeLive = async () => { sold = true; return { sig: 'S', raw: null, landed: true }; };
+    e._tokenBalanceRaw = async () => 1000n;
+    e.positions.set('OLD', {
+      mint: 'OLD', symbol: 'OLD', entryMc: 100, mc: 100, peakMc: 100, solIn: 0.01, feeBuy: 0,
+      openedAt: Date.now() - 60000, bookedAt: Date.now(), status: 'open', closing: false,
+      paper: false, fails: 0, nextTry: 0, pending: false, tokIn: 1000n,
+    });
+    e._tick();
+    await settle();
+    assert.strictEqual(sold, false, 'a position restored a moment ago waits for its first price');
+    assert.ok(e.positions.has('OLD'));
+  }
+
   fs.rmSync(dir, { recursive: true, force: true });
   console.log('Exits test passed');
   process.exit(0);

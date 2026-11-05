@@ -469,6 +469,10 @@ class Engine extends EventEmitter {
         peakMc: Number(rec.peakMc) || Number(rec.mc) || Number(rec.entryMc) || 0,
         solIn: Number(rec.solIn) || this.s.buyAmountSol, feeBuy: Number(rec.feeBuy) || 0,
         openedAt: Number(rec.openedAt) || now, status: 'open', closing: false, paper: false,
+        // A restored position has no price yet in this session. Its clock starts when it entered the book, not when it
+        // was bought: a coin from three days ago would otherwise be "blind for three days" and sold by the watchdog on
+        // the very first tick, before any feed had a chance to answer.
+        bookedAt: now,
         fails: 0, nextTry: 0, pending: held === null, tp1Done: Boolean(rec.tp1Done), sig: rec.sig,
         tokIn: held, adopted: Boolean(rec.adopted), graduated: Boolean(rec.graduated),
       });
@@ -539,7 +543,7 @@ class Engine extends EventEmitter {
       this.positions.set(a.mint, {
         mint: a.mint, symbol: (t && t.symbol) || a.mint.slice(0, 4), name: (t && t.name) || '',
         entryMc: mc, mc, peakMc: mc, solIn: solValue > 0 ? solValue : this.s.buyAmountSol,
-        feeBuy: 0, openedAt: Date.now(),
+        feeBuy: 0, openedAt: Date.now(), bookedAt: Date.now(),
         status: 'open', closing: false, paper: false, fails: 0, nextTry: 0, pending: false,
         tp1Done: false, sig: null, tokIn: BigInt(a.amount), adopted: true,
       });
@@ -974,7 +978,7 @@ class Engine extends EventEmitter {
         this._lostAt = now;
         const lost = mints.filter((mint) => {
           const p = this.positions.get(mint);
-          return p && !p.closing && now - (p.pxAt || p.openedAt || now) > PX_DEAD_MS;
+          return p && !p.closing && now - (p.pxAt || p.bookedAt || now) > PX_DEAD_MS;
         });
         if (lost.length) {
           const rows = await this.market.enrich(lost, true).catch(() => new Map());
@@ -2206,7 +2210,7 @@ class Engine extends EventEmitter {
       // button ended it. The price feed gets PX_DEAD_MS to answer (the poll asks for that mint directly after that),
       // and after PX_LOST_MS the position is closed: any price beats no price. A position with no reading at all is
       // counted from the moment it entered the book, because holding it blind is the same problem either way.
-      const lastPx = p.pxAt || p.openedAt || now;
+      const lastPx = p.pxAt || p.bookedAt || p.openedAt || now;
       if (now - lastPx > PX_LOST_MS) {
         p.trigger = null;
         this._sell(p, 'Price lost', 100);
