@@ -1,6 +1,21 @@
 # PillCrew Sniper
 
+![PillCrew Sniper](promo/banner.png)
+
 A desktop trading app for Pump.fun with an encrypted local wallet, live market feeds, configurable entries and exits, and a separate Practice Mode.
+
+## What it looks like
+
+| The dashboard | The live feed |
+| --- | --- |
+| ![Dashboard](screenshots/dashboard.png) | ![Live feed](screenshots/feed.png) |
+
+| The wallet | Settings and presets |
+| --- | --- |
+| ![Wallet](screenshots/wallet.png) | ![Settings](screenshots/settings.png) |
+
+Every picture is the shipped program in Practice Mode — the real window, the real market data, not a mock-up. The
+wallet in the picture was created for the screenshot and thrown away with the profile it lived in.
 
 ## Run locally
 
