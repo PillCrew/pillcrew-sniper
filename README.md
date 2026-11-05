@@ -81,6 +81,16 @@ wallet in the picture was created for the screenshot and deleted with the profil
 | **Honest books** | Practice results and real trades are separate ledgers. A measured exit uses the wallet's own SOL delta from the confirmed sale. |
 | **Bring your own endpoints** | FluxRPC, Helius, any Solana RPC plus a separate WebSocket, PumpDev, Jupiter, Sol Incinerator. All optional, all stored locally, none ever put in a settings code. |
 
+## How it compares
+
+[**docs/COMPARISON.md**](docs/COMPARISON.md) puts this app next to the popular open-source pump.fun bots (Chainstack,
+Dexoryn, M8S, Dorado, Ferris, AllenHark) capability by capability, and names where we lose instead of hiding it.
+
+The short version: this is the only desktop product on that list — a window, a wallet inside it, Practice Mode,
+presets and a CI suite. It is **not** the fastest feed: Geyser gRPC and Jito ShredStream see a transaction earlier than
+the public log stream we decode, and this README will not pretend otherwise. Nobody on either side of that table has a
+verified profit figure.
+
 ## What is included
 
 - **Feeds** — Pump.fun program-log WebSocket decoding, PumpPortal, optional PumpDev, plus market discovery from the
@@ -135,6 +145,7 @@ notarization are described in **[docs/BUILD.md](docs/BUILD.md)**.
 | | |
 | --- | --- |
 | [Install and run](docs/INSTALL.md) | Exact steps and fixes for Windows, macOS and Linux |
+| [Comparison](docs/COMPARISON.md) | Capability by capability against the other open-source pump.fun bots, including where we lose |
 | [Settings reference](docs/SETTINGS.md) | Every number the app has, what it does, and why the percentages are net |
 | [Architecture](docs/ARCHITECTURE.md) | How the engine, feeds and safety layers fit together |
 | [Backtesting](docs/BACKTESTING.md) | Replaying a recorded session |

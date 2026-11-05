@@ -1,0 +1,78 @@
+# How PillCrew Sniper compares
+
+The honest version, because a comparison nobody can check is marketing.
+
+**How to read this.** Every row marked ✅ for **PillCrew** was verified in this repository (the file that does it is
+named). Cells for other projects come from **their own documentation** on the date below — they were not installed,
+run, benchmarked or audited here. If a project documents nothing about a row, it is marked `—`, which means "not
+stated", not "cannot".
+
+Checked against the public READMEs on **2026-11-06**: Chainstack `pumpfun-bonkfun-bot`, Dexoryn
+`pumpfun-sniper-bot`, M8S `solana-sniping-bot`, Dorado `solana-pumpfun-sniper-bot`, Ferris
+`solana-pumpfun-bonk-sniper-bot`, AllenHark `PumpFun-Sniper`.
+
+## The short answer
+
+- **As a product, we are ahead of everything on that list.** We are the only one that is a desktop application with a
+  wallet inside it, a visible scoring of every coin, a Practice Mode that costs nothing, presets you can undo, and a
+  test suite plus CI that runs on every push. The others are scripts with a `.env` file and a log to read.
+- **As a pure latency play, we are not the fastest, and the README says so.** Geyser gRPC and Jito ShredStream see
+  transactions earlier than the public `logsSubscribe` stream we decode. Chainstack's own README puts it best: shreds
+  arrive *pre-execution*. We cannot honestly claim to beat that without an endpoint to prove it on.
+- **Nobody on that list has a verified profitability figure**, and neither do we. Anyone who says otherwise is
+  selling something.
+
+## Capability by capability
+
+| | PillCrew Sniper | Chainstack | Dexoryn | M8S | Dorado | Ferris | AllenHark |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Desktop app with a UI | ✅ `renderer/` | — | — | — | — | — | — |
+| Wallet created and encrypted inside the app | ✅ `src/wallet.js` | — | — | — | — | — | — |
+| Practice Mode (fake SOL, real market) | ✅ `src/engine.js` | — | — | — | ✅ paper trading stated | — | — |
+| One-press presets + shareable settings code | ✅ `src/share.js` | — | — | — | — | — | — |
+| Bring your own RPC / backup RPC / WS | ✅ `src/rpc.js`, `src/chain.js` | ✅ `.env` endpoints | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Program-log WebSocket decoding | ✅ `src/chain.js` | ✅ `logs` listener | — | — | — | — | — |
+| PumpPortal feed | ✅ `src/engine.js` (`feedSource: pumpportal`) | — | — | — | — | — | — |
+| Geyser / Yellowstone gRPC | ❌ | ✅ `geyser` listener | — | — | — | — | — |
+| Jito ShredStream (pre-execution) | ❌ (we have Jito **bundles** for sending, `src/jito.js`) | ✅ `shreds` listener | ✅ ShredStream + bundles | — | — | — | ✅ ShredStream |
+| pump.fun bonding curve trading | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| PumpSwap after graduation | ✅ | ✅ | ✅ | ✅ | — | ✅ | — |
+| Raydium / Meteora | ❌ | — | — | ✅ Raydium | — | ✅ both | — |
+| Copy trading (follow a wallet) | ❌ | — | — | — | ✅ stated | — | — |
+| Take profit / stop loss | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Trailing stop / peak give-back / break-even | ✅ | — | — | — | ✅ trailing stop | — | — |
+| Position, pace and session-loss limits | ✅ | — | — | — | — | — | — |
+| Mint/freeze authority check before a live buy | ✅ `src/risk.js` | — | — | — | — | — | — |
+| Transaction inspection before signing | ✅ `src/txguard.js` | — | — | — | — | — | — |
+| One signed transaction to several RPCs | ✅ `src/rpc.js` | — | — | — | — | — | — |
+| Rent recovery from empty token accounts | ✅ `src/reclaim.js` | ✅ cleanup | — | — | — | — | — |
+| Recorded-session replay / backtest | ✅ `src/backtest.js`, `src/simulation.js` | — | — | — | — | — | — |
+| Tests + CI on every push | ✅ 12 node suites + Electron UI, Windows **and** Linux | — | — | — | — | — | — |
+| Installers for Windows, macOS, Linux | ✅ `docs/BUILD.md` | — | — | — | — | — | — |
+| Its own README says "not for production" | — (we ship it as a product, with limits stated) | ✅ says exactly that | — | — | — | — | — |
+
+`—` = not stated in that project's documentation. It is not a claim that the feature is missing.
+
+## Where we lose, plainly
+
+1. **Data latency.** Geyser gRPC and ShredStream are closer to the validator than a public WebSocket. A coin seen 200 ms
+   earlier is a real advantage in a sniper, and no amount of UI makes up for it.
+2. **Raydium and Meteora.** We trade pump.fun curves and PumpSwap pools. A coin that migrates to Raydium left our
+   market.
+3. **Copy trading.** Following a good wallet is a feature Dorado documents and we do not have.
+4. **Language of the market.** Two of those projects are Rust with a shred stream in front; our whole path is Node.js.
+   Ours is fast enough for a UI-driven bot (the numbers are in [SETTINGS.md](SETTINGS.md)), it is not a Rust shred
+   consumer and will not pretend to be.
+
+## What we would add to beat them outright
+
+In the order that would actually pay for itself:
+
+1. **An optional Yellowstone gRPC feed** behind `rpcUrl`-style settings: same scoring, same exits, earlier data. Needs a
+   provider endpoint to prove, and a key the user brings — the app must keep working without it.
+2. **Post-migration trading** (Raydium CPMM / AMM and Meteora): the exits and the guards are already market-agnostic,
+   the work is the pool math and the account layouts.
+3. **Copy trading**: the chain feed already decodes wallet-level trades, so a watched wallet is a new entry source, not
+   a new data path — with its own cap, because a copied entry is still a decision.
+
+None of the three is started. Nothing above is a promise of profit.

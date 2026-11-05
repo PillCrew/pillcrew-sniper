@@ -7,6 +7,10 @@ project uses semantic versioning.
 
 ### Documentation
 
+- **A comparison anyone can check** — [docs/COMPARISON.md](docs/COMPARISON.md) sets this app beside Chainstack, Dexoryn,
+  M8S, Dorado, Ferris and AllenHark, row by row, with the file that proves each of our ✅ and a plain list of where we
+  lose: Geyser gRPC and ShredStream data, Raydium/Meteora after a migration, copy trading, Rust. Competitor cells come
+  from their own READMEs on 2026-11-06 and were not benchmarked here, which the document says in its own words.
 - **A real install guide** — [docs/INSTALL.md](docs/INSTALL.md) walks Windows, macOS and Linux through both the
   installer and a source checkout, with the exact commands, where the wallet, settings and logs live on each system,
   how to uninstall and wipe, and a troubleshooting table for the failures people actually hit (SmartScreen, Gatekeeper
