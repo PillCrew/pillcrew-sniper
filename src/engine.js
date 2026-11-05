@@ -102,9 +102,6 @@ const TX_GUARD_MAX_SOL = 0.01;
 const MAX_TRACKED = 400;
 // A pump.fun launch is one billion tokens, so "SOL paid per whole token × one billion" is the market cap every
 // reading in this app is quoted in. That is what turns a fill into an entry price without asking anybody.
-// A trade whose fees are a fifth of the ticket is not a trade: at 0.001 SOL the two tips alone were 40% of it, so every
-// position opened at -42% and the stop fired instantly (measured live, five losses in a row inside a minute).
-const MAX_ROUND_TRIP_PCT = 20;
 const PUMP_SUPPLY = 1e9;
 // A fill-derived entry is only rejected when it is not a number at all: a board row can be a different pool or a
 // minute old, so a genuine fill can disagree with it by a lot (measured on $sol: board 56 SOL, fill implying over a
@@ -205,6 +202,11 @@ const DEFAULTS = {
   wideDiscovery: true,
   pumpdevKey: '',
   incineratorKey: '',
+  // Your own Jupiter API key (portal.jup.ag). The free door answered about one request a second before it started
+  // refusing this machine's IP, so every price lane was fighting for the same allowance; a key raises the allowance and
+  // is sent on every Jupiter call the desk makes (quotes, the price service, the token lists). Nothing else changes -
+  // the key is a credential, it is never printed back, never shared in a settings code and never logged.
+  jupiterKey: '',
   autoReclaim: true,
   // Leftovers that neither door can sell are worth less than the rent their account holds: burning them and closing
   // the account returns about 0.00204 SOL each. Off means they are left alone.
@@ -236,6 +238,14 @@ const DEFAULTS = {
   simpleMode: true,
   maxBuyers: 0,
   minLiqUsd: 4000,
+  // A trade whose fees are a fifth of the ticket is not a trade (measured: two tips at 0.001 SOL are 40% of it). The
+  // gate is a setting so a desk that pays its fees in a different shape can raise it, and it cannot be switched off by
+  // accident - the floor is 5%.
+  maxRoundTripPct: 20,
+  // How old a coin may be to be bought at all. A launch younger than `minTokenAgeSec` has no tape to judge, and one
+  // older than `maxTokenAgeSec` has already had its move. Zero means off in both directions.
+  minTokenAgeSec: 0,
+  maxTokenAgeSec: 0,
   // A price rule has to hold this long, on fresh readings, before it may sell: the safeguard against a spike that is
   // gone before the order lands. Measured live, a coin showed +135% for a moment and the sale filled at -3%. A level
   // that has been CLEARLY cleared (a target five points past, a floor five under) skips this wait - see `_riskHoldMs`.
@@ -353,9 +363,11 @@ class Engine extends EventEmitter {
     // Mints whose curve is not quoted in SOL: no tolerance or route can fill them, so they are remembered for the
     // session instead of being re-ordered (and re-paid for) every time the market board scores them again.
     this._unsupported = new Set();
-    this.jup = new Jupiter();
+    this.jup = new Jupiter({ getKey: () => this.s.jupiterKey || '' });
     this.jito = new Jito();
     this.market = new Market({
+      // Your own Jupiter key, read at call time so a key typed into Settings is live on the next request.
+      getKey: () => this.s.jupiterKey || '',
       onError: (e) => this._marketError(e),
     });
     this.inc = new Incinerator(() => this.s.incineratorKey);
@@ -1605,6 +1617,16 @@ class Engine extends EventEmitter {
     // exactly what is typed. The four-times ceiling exists for the full desk's scanned movers, but it let a 701 SOL coin
     // into a 60-500 band - and coins that late in their life are where the instant -20% entries came from.
     const maxMc = s.simpleMode ? s.maxMcSol : (external ? s.maxMcSol * 4 : s.maxMcSol);
+    // RULE ADDED 2026-11-05: how old a coin may be, in both directions. A launch younger than `minTokenAgeSec` has no
+    // tape to judge (its buyers are the dev and his friends), and one older than `maxTokenAgeSec` has already had its
+    // move - the same reason the five minute ceiling exists, expressed in the coin's whole life. Zero is off, and a
+    // coin whose age nobody knows is not refused by a clock that has nothing to read.
+    const coinAgeSec = (now - (Number(t.launchedAt) || Number(t.createdAt) || 0)) / 1000;
+    const ageKnown = Number.isFinite(coinAgeSec) && coinAgeSec > 0;
+    const minAge = Number(s.minTokenAgeSec) || 0;
+    const maxAge = Number(s.maxTokenAgeSec) || 0;
+    const tooYoung = ageKnown && minAge > 0 && coinAgeSec < minAge;
+    const tooOld = ageKnown && maxAge > 0 && coinAgeSec > maxAge;
     const minScore = s.minScore + (t.creatorUnknown ? 10 : 0);
     // The profile's buyer bar is written for a twenty-second window of distinct wallets. A market row counts
     // transactions over five minutes, so it is scaled down here; measured on live data, a healthy young coin
@@ -1636,6 +1658,8 @@ class Engine extends EventEmitter {
       let reason = '';
       if (!s.allowGraduated && t.graduated) reason = 'Graduated to PumpSwap';
       else if (t.unsupported) reason = 'Quoted in another token, cannot be bought here';
+      else if (tooYoung) reason = `Too new (${Math.round(coinAgeSec)}s old, needs ${minAge}s)`;
+      else if (tooOld) reason = `Too old (${Math.round(coinAgeSec / 60)} min)`;
       else if (ext && s.maxDevHoldPct > 0 && ext.devHoldPct >= s.maxDevHoldPct) reason = 'Creator holds too much';
       else if (t.devBuySol > s.maxDevBuySol) reason = 'Creator holds too much';
       else if (m.buys >= 3 && m.topShare > s.maxTraderSharePct / 100) reason = 'One wallet dominates buying';
@@ -1654,6 +1678,8 @@ class Engine extends EventEmitter {
     else if (ext && ext.freezeRisk) reason = 'Token can be frozen';
     else if (!s.allowGraduated && t.graduated) reason = 'Graduated to PumpSwap';
     else if (t.unsupported) reason = 'Quoted in another token, cannot be bought here';
+    else if (tooYoung) reason = `Too new (${Math.round(coinAgeSec)}s old, needs ${minAge}s)`;
+    else if (tooOld) reason = `Too old (${Math.round(coinAgeSec / 60)} min)`;
     else if (ext && s.maxDevHoldPct > 0 && ext.devHoldPct >= s.maxDevHoldPct) reason = 'Creator holds too much';
     else if (t.devBuySol > s.maxDevBuySol) reason = 'Creator holds too much';
     else if (m.buys >= 3 && m.topShare > s.maxTraderSharePct / 100) reason = 'One wallet dominates buying';
@@ -1933,10 +1959,14 @@ class Engine extends EventEmitter {
     // stop fired within a second, five times in a row - and no entry, however good, could have paid for that. The desk
     // now refuses the configuration and says exactly what to change, instead of quietly losing the ticket each time.
     const roundTripPct = FEE * 200 + (this._feeFor(false) + this._feeFor(true)) / Math.max(1e-9, sol) * 100;
-    if (roundTripPct > MAX_ROUND_TRIP_PCT) {
+    // RULE CHANGED 2026-11-05: the ceiling is a SETTING now (`maxRoundTripPct`, 5% floor) instead of a constant, so a
+    // desk that pays its fees in a different shape can move it - but it can never be switched off, because the moment
+    // it is off every ticket at every size looks tradable and the smallest one loses to its own tips.
+    const maxTrip = clamp(Number(s.maxRoundTripPct) || 20, 5, 90);
+    if (roundTripPct > maxTrip) {
       if (!this._costWarnedAt || now - this._costWarnedAt > 300000) {
         this._costWarnedAt = now;
-        const need = Math.ceil((this._feeFor(false) + this._feeFor(true)) / ((MAX_ROUND_TRIP_PCT - FEE * 100) / 100) * 1e4) / 1e4;
+        const need = Math.ceil((this._feeFor(false) + this._feeFor(true)) / ((maxTrip - FEE * 100) / 100) * 1e4) / 1e4;
         this._log('error', `Not buying: a ${sol} SOL ticket cannot pay its own fees - the round trip costs ${roundTripPct.toFixed(0)}% of it (two tips of ${Number(s.priorityFeeSol || 0).toFixed(4)} SOL plus 2% of the protocol). Raise the buy amount to at least ${need.toFixed(3)} SOL, or lower the priority fee. Nothing is lost by waiting.`);
       }
       return;
@@ -3518,4 +3548,5 @@ class Engine extends EventEmitter {
 }
 
 module.exports = { Engine, DEFAULTS, PROFILES, AUTOPILOT };
+
 

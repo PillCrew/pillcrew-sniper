@@ -21,6 +21,9 @@ const SHARE_KEYS = [
   'minHolders', 'deepEntry',
   // simple settings: the buyer ceiling and the mode switch
   'maxBuyers', 'simpleMode',
+  // RULE ADDED 2026-11-05: the two clocks every sniper is judged on, and the fee gate. They are part of a plan, so a
+  // code carries them - and it still carries nothing that is a credential (see the list below).
+  'minTokenAgeSec', 'maxTokenAgeSec', 'maxRoundTripPct',
 ];
 
 const PREFIX = 'PCS1.';

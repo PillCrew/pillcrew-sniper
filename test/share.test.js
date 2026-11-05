@@ -39,12 +39,12 @@ assert.match(line, /first rung/, 'and the first rung');
 // A code shared BEFORE a setting existed still works. The list is positional, so a shorter list is an older code, not a
 // damaged one - and every code already posted on X has to keep working for ever.
 {
-  // A code from before the five-minute floor, the holder bar, the extra-filters switch and the simple settings existed.
-  const shorter = { ...settings };
-  const added = ['minChange5mPct', 'minHolders', 'deepEntry', 'maxBuyers', 'simpleMode'];
-  for (const k of added) delete shorter[k];
-  const keys = Share.SHARE_KEYS.filter((k) => !added.includes(k));
-  const values = keys.map((k) => Number(shorter[k]));
+  // RULE CHANGED 2026-11-05 (three keys were appended: the two coin-age clocks and the fee gate): an older code is
+  // modelled as a PREFIX of the list, which is exactly what an older release wrote, instead of "the current list minus
+  // the keys that came later" - that only matched while the new keys happened to be the last ones.
+  const cut = Share.SHARE_KEYS.indexOf('maxChange5mPct') + 1;   // everything up to the five minute ceiling
+  const keys = Share.SHARE_KEYS.slice(0, cut);
+  const values = keys.map((k) => Number(settings[k]));
   const body = Buffer.from(JSON.stringify({ v: 1, p: 'balanced', n: values })).toString('base64')
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   let h = 0x811c9dc5;

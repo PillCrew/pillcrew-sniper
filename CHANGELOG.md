@@ -7,6 +7,24 @@ project uses semantic versioning.
 
 The first public release.
 
+### Your own keys, and every number on the desk is a setting
+
+A professional desk is judged by what it lets the operator bring to it, so nothing it reads is hard-coded any more:
+
+- **`jupiterKey`** - your own key from portal.jup.ag is now sent as `x-api-key` on **every** Jupiter call: the backup
+  swap route, the price service and the token lists. Measured on this machine, the public door answers about one request
+  a second and then refuses the whole connection for minutes - which is exactly the state that made exits wait for a
+  price while the coin was moving. Without a key nothing changes and nothing is required.
+- **`minTokenAgeSec` / `maxTokenAgeSec`** - the coin's own age, in both directions, as a setting. A launch younger than
+  the floor has no tape to judge (its buyers are the dev and his friends); one older than the ceiling has already had
+  its move.
+- **`maxRoundTripPct`** - the fee gate that used to be a constant. A ticket whose round trip costs more than this share
+  of it is refused, with the size that would work printed in the log. It has a **5% floor** and cannot be switched off.
+- all three travel inside a **settings code**, so a plan can be shared and reproduced exactly - while the keys
+  themselves never do: no API key, RPC URL, wallet address or mode is ever encoded (a test holds that).
+- the Settings screen gained a **Jupiter key** field beside PumpDev and Sol Incinerator, and the three new numbers sit
+  in the advanced panel with the rest of the desk.
+
 ### The High roller style, and why a big ticket wants the opposite plan
 
 A serious bankroll does not pay 5.4% to round-trip a ticket - at 0.5 SOL and above it pays about 3%, and that changes

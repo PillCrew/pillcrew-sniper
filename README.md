@@ -316,13 +316,20 @@ The full list, with defaults per style, is in [docs/SETTINGS.md](docs/SETTINGS.m
   with a tip that is paid only when the bundle lands. It never replaces the normal route: the same bytes
   still go to the RPC nodes, so the worst case is a lost auction that costs nothing. The tip is a setting
   (`Jito tip per trade`), and the counter for spent fees never counts a tip that was not paid.
-- **Jupiter** adds a discovery door and, with a free key, a backup swap route if the main route fails.
-  The backup swap route itself needs no key: it is there on a fresh install.
+- **Jupiter** is the backup swap route, the price service and one discovery door. It works with no key;
+  **your own free key** (portal.jup.ag) is sent on every Jupiter call and is the difference between a price
+  lane that keeps up and one waiting its turn - the public door answers about one request a second before
+  it refuses the connection.
 - **Sol Incinerator** burns leftover tokens and closes their accounts. Closing empty accounts is free
   and local, without any key, and so is selling a leftover balance instead of burning it.
 - **Private RPC** (Helius, QuickNode, Triton) makes every read and every send faster.
 
-Keys are stored in your local settings file and are only ever sent to the service they belong to.
+Every number the rules read is a setting in the app - the two coin-age clocks (`minTokenAgeSec`,
+`maxTokenAgeSec`) and the fee gate (`maxRoundTripPct`) included - so a plan can be built, shared as a code
+and reproduced exactly. A code never carries a key, an RPC URL, a wallet or a mode.
+
+Keys are stored in your local settings file and are only ever sent to the service they belong to. They are
+never printed back into the window, never logged, and never included in a shared settings code.
 
 ## Safety
 

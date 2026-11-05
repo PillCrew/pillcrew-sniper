@@ -194,6 +194,9 @@ app.whenReady().then(() => {
       tp1Pct: [0, 5000], tp1SellPct: [0, 100], triggerHoldMs: [0, 10000], maxBuysPerMin: [1, 600],
       maxLossStreak: [1, 100], pauseMinutes: [0, 1440], watchSec: [0, 600], minChange5mPct: [0, 5000],
       maxChange5mPct: [0, 5000], minHolders: [0, 1000000], maxBuyers: [0, 100000],
+      // The two clocks a sniping desk lives by, and the fee gate. The round trip can never be switched off - a 5%
+      // floor keeps a typo from turning the desk into a machine that pays its own tips.
+      minTokenAgeSec: [0, 86400], maxTokenAgeSec: [0, 86400], maxRoundTripPct: [5, 90],
     };
     // `openPositions` is the engine's own book on disk. The renderer must never be able to rewrite it.
     const INTERNAL = new Set(['openPositions']);
@@ -219,7 +222,7 @@ app.whenReady().then(() => {
     // the mode is frozen while the bot runs.
     if (clean.mode && clean.mode !== store.get().mode && engine.running) throw new Error('Stop the bot before switching modes.');
     if (clean.mode && clean.mode !== 'live' && clean.mode !== 'paper') delete clean.mode;
-    for (const k of ['incineratorKey', 'pumpdevKey']) {
+    for (const k of ['incineratorKey', 'pumpdevKey', 'jupiterKey']) {
       if (k in clean) {
         const v = String(clean[k] || '').trim();
         if (!/^[A-Za-z0-9._\-]{0,200}$/.test(v)) throw new Error('That API key has invalid characters. Paste only the key.');

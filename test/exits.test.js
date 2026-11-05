@@ -1389,6 +1389,40 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     e2._tokenBalanceRaw = async () => 1000n;
     await e2._buy(t2, { score: 90, m: { buyers: 20 }, pass: true });
     assert.ok(e2.positions.has('FINE'), 'a 0.02 SOL ticket with the same tip goes through');
+
+    // RULE CHANGED 2026-11-05: the ceiling is a SETTING (`maxRoundTripPct`) instead of a constant, but it can never be
+    // switched off - a 5% floor, because a desk with no gate trades tickets whose tips are most of the ticket.
+    const e3 = engine({ buyAmountSol: 0.001, priorityFeeSol: 0.0002, maxRoundTripPct: 60 });
+    e3.walletBalance = 5; e3._freeSol = () => 5; e3._log = () => {}; e3._entryPrice = async () => ({ mc: 200, src: 'curve' });
+    e3.market = market;
+    const t3 = { mint: 'LOOSE', symbol: 'LOOSE', mc: 200, score: 90, status: 'watching', createdAt: Date.now() - 60000, trades: [], mcHist: [], lastActivity: Date.now(), sources: new Set(['launch']) };
+    e3.tokens.set('LOOSE', t3);
+    await e3._buy(t3, { score: 90, m: { buyers: 20 }, pass: true });
+    assert.ok(e3.positions.has('LOOSE'), 'a raised ceiling lets a small ticket through when the operator asks for it');
+    const e4 = engine({ buyAmountSol: 0.001, priorityFeeSol: 0.0002, maxRoundTripPct: 0 });
+    e4.walletBalance = 5; e4._freeSol = () => 5; e4._log = () => {}; e4.market = market;
+    const t4 = { mint: 'OFF', symbol: 'OFF', mc: 200, score: 90, status: 'watching', createdAt: Date.now() - 60000, trades: [], mcHist: [], lastActivity: Date.now(), sources: new Set(['launch']) };
+    e4.tokens.set('OFF', t4);
+    await e4._buy(t4, { score: 90, m: { buyers: 20 }, pass: true });
+    assert.ok(!e4.positions.has('OFF'), 'and a zero ceiling is read as the 5% floor, never as "off"');
+  }
+
+  // RULE ADDED 2026-11-05: the coin's own age is a setting in both directions. A launch younger than the floor has no
+  // tape to judge (its buyers are the dev and his friends), and one older than the ceiling has already had its move.
+  {
+    const e = engine({ simpleMode: true });
+    e.store.set({ minTokenAgeSec: 20, maxTokenAgeSec: 600 });
+    const coin = (mint, ageSec) => {
+      const t = { mint, name: 'A', symbol: 'A', creator: 'c', mc: 120, mcHist: [[Date.now() - 3000, 100], [Date.now(), 120]], trades: [], devSold: false, devBuySol: 0, status: 'watching', score: 90, reason: '', lastActivity: Date.now(), lastStreamAt: Date.now(), createdAt: Date.now() - ageSec * 1000 };
+      for (let i = 0; i < 40; i++) t.trades.push({ ts: Date.now(), side: 'buy', sol: 0.2, trader: 'w' + i });
+      e.tokens.set(mint, t);
+      return t;
+    };
+    assert.match(e._eval(coin('YOUNG', 5), Date.now()).reason, /Too new \(5s old, needs 20s\)/, 'a coin five seconds old is not traded');
+    assert.match(e._eval(coin('OLD', 3600), Date.now()).reason, /Too old \(60 min\)/, 'nor one that has been running for an hour');
+    assert.strictEqual(e._eval(coin('FIT', 120), Date.now()).pass, true, 'one inside the window is');
+    e.store.set({ minTokenAgeSec: 0, maxTokenAgeSec: 0 });
+    assert.strictEqual(e._eval(coin('OFF2', 3600), Date.now()).pass, true, 'and zero turns both clocks off');
   }
 
   // RULE ADDED 2026-11-05 (measured on $JIMOTHY: "Peak give-back (peaked at +36.7%)" booked at -5.5%): a give-back is

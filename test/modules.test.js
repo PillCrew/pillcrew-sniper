@@ -58,12 +58,18 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   fakeFetch(() => res(429, {})); await assert.rejects(jup.swap(swapArgs), /rate limit/i);
   fakeFetch(() => res(200, { transaction: null }));
   await assert.rejects(jup.swap(swapArgs), /no route/i);
-  // RULE CHANGED: Jupiter needs no key at all now - measured on 2026-11-04 the order endpoint returned a real quote
-  // in about 120 ms without one - so the client never sends a key header and the setting is gone from the app.
+  // RULE CHANGED 2026-11-05: Jupiter needs no key, but a key can be given - and the operator's own key is what the
+  // app now sends. Measured on 2026-11-04 the order endpoint answered without one in about 120 ms; measured on
+  // 2026-11-05 the same host refused this machine's IP for minutes at a time, which is what a key fixes.
   let sawKeyHeader = false;
   fakeFetch((u, o) => { if (o.headers['x-api-key']) sawKeyHeader = true; return res(200, { transaction: null }); });
   await assert.rejects(jup.swap(swapArgs), /no route/i);
-  assert.strictEqual(sawKeyHeader, false, 'the backup route is keyless');
+  assert.strictEqual(sawKeyHeader, false, 'without a key, no key header is sent');
+  let seen = null;
+  const jupKeyed = new Jupiter({ getKey: () => 'JUPKEY123' });
+  fakeFetch((u, o) => { seen = o.headers['x-api-key']; return res(200, { transaction: null }); });
+  await assert.rejects(jupKeyed.swap(swapArgs), /no route/i);
+  assert.strictEqual(seen, 'JUPKEY123', 'with one, every Jupiter call carries it');
   // A quote for a different amount is refused before anything is signed.
   fakeFetch(() => res(200, { transaction: 'AA==', inAmount: '999' }));
   await assert.rejects(jup.swap(swapArgs), /different amount/i);

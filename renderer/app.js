@@ -648,7 +648,7 @@
       box.append(h('label', { class: 'tgl' }, input, h('span', { class: 'sw' }), h('div', {}, h('b', {}, title), h('small', {}, desc))));
     }
     if (settings.simpleMode) box.append(h('p', { class: 'hint', style: 'margin:10px 0 0' }, 'Every other rule is off while the simple settings are on. Switch them off to see the full desk.'));
-    for (const [id, key] of [['#incKey', 'incineratorKey'], ['#pdKey', 'pumpdevKey']]) {
+    for (const [id, key] of [['#incKey', 'incineratorKey'], ['#pdKey', 'pumpdevKey'], ['#jupKey', 'jupiterKey']]) {
       const el = $(id);
       if (!el) continue;
       el.value = '';
@@ -659,6 +659,7 @@
   for (const [btn, input, key, label] of [
     ['#incSave', '#incKey', 'incineratorKey', 'Sol Incinerator'],
     ['#pdSave', '#pdKey', 'pumpdevKey', 'PumpDev'],
+    ['#jupSave', '#jupKey', 'jupiterKey', 'Jupiter'],
   ]) {
     $(btn).addEventListener('click', async () => {
       const v = $(input).value.trim();
@@ -755,6 +756,12 @@
     ['maxTraderSharePct', 'Skip if one wallet is over (%)', 5, 'Avoids fake volume from a single wallet.'],
     ['maxChange5mPct', 'Skip if already up (%) in 5 min, 0 is off', 5, 'Refuses a coin that has already run: buying it is buying somebody else\'s exit.'],
     ['minChange5mPct', 'Only buy if up at least (%) in 5 min, 0 is off', 1, 'The floor of the same band: a launch that has not moved yet is where a move starts. A coin only 2% up with real demand is early; a coin 60% up is late.'],
+    // RULE ADDED 2026-11-05: the two clocks a sniping desk is judged on, and the fee gate, are settings now instead of
+    // constants in the code - a professional plan has to be reproducible and shareable, and these three decide as much
+    // as the band does.
+    ['minTokenAgeSec', 'Do not buy a coin younger than (seconds, 0 is off)', 1, 'A launch this young has no tape to judge - the buyers are the dev and his friends. Zero buys the first print.'],
+    ['maxTokenAgeSec', 'Do not buy a coin older than (seconds, 0 is off)', 5, 'The whole-life version of the five minute ceiling: past this the move has happened and a small ticket is buying somebody else\'s exit.'],
+    ['maxRoundTripPct', 'Refuse a ticket whose round trip costs more than (%)', 1, 'Fees both ways as a share of your ticket. Below this the tips eat the trade - at 0.001 SOL they are 40% of it. 5 is the floor, 20 is the shipped plan.'],
     ['tp1Pct', 'First take profit at (%, 0 is off)', 1, 'The first bite. Sells part of the position early and lets the rest run.'],
     ['tp1SellPct', 'How much to sell at that first target (%)', 5, 'A share of the position, for example 60. The remainder follows the target and the trailing stop.'],
     ['triggerHoldMs', 'A signal must hold for (ms) before it sells', 50, 'The safeguard: a take profit or a stop has to be seen again after this long, on a fresh price, before the bot acts. 400 is a blink; 0 acts on the first reading.'],
@@ -783,6 +790,11 @@
     ['takeProfitPct', 'Take profit (%)', 1, 'Sell when the gain reaches this, after fees.'],
     ['stopLossPct', 'Stop loss (%)', 1, 'Sell when the loss reaches this.'],
     ['maxHoldSec', 'Max hold time (seconds)', 5, 'Sell if nothing happens by then.'],
+    // RULE ADDED 2026-11-05: these three decide in the SIMPLE plan as well - the age clocks gate both modes and the fee
+    // gate is on every buy - so hiding them here left the shipped plan with three numbers nobody could change.
+    ['minTokenAgeSec', 'Do not buy a coin younger than (seconds, 0 is off)', 1, 'A launch this young has no tape to judge. Zero buys the first print.'],
+    ['maxTokenAgeSec', 'Do not buy a coin older than (seconds, 0 is off)', 5, 'The whole-life version of the five minute ceiling. Zero turns it off.'],
+    ['maxRoundTripPct', 'Refuse a ticket whose round trip costs more than (%)', 1, 'Fees both ways as a share of your ticket. 5 is the floor, 20 is the shipped plan.'],
   ];
   function renderSettings() {
     if (!settings) return;

@@ -9,12 +9,17 @@ const HOSTS = ['https://lite-api.jup.ag/swap/v2', 'https://api.jup.ag/swap/v2'];
 const WSOL = 'So11111111111111111111111111111111111111112';
 
 class Jupiter {
-  constructor() {
+  constructor(opts = {}) {
     this._host = 0;
+    // The operator's own Jupiter key, when there is one: the free door answers about one request a second before it
+    // starts refusing, and a key is the difference between a price lane that keeps up and one that waits its turn.
+    this.getKey = opts.getKey || (() => '');
   }
 
   _headers(extra) {
-    return { accept: 'application/json', ...extra };
+    const key = this.getKey();
+    const auth = key ? { 'x-api-key': key } : {};
+    return { accept: 'application/json', ...auth, ...extra };
   }
 
   async _fetch(path, opts = {}, timeout = 6000) {

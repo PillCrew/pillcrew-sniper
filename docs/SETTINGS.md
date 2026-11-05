@@ -3,11 +3,36 @@
 Every setting lives in `settings.json` in the app data folder and is editable in the app. Values are
 validated on save, so a typo cannot turn into a ruinous number.
 
+**Nothing is hidden.** Every number the rules read is a setting with a field in the app, so a plan can be
+reproduced, shared (a settings code carries the plan, never a key) or replaced by your own. The keys below
+are grouped the way the Settings screen groups them.
+
 App data folders:
 
 - Windows: `%APPDATA%\PillCrew Sniper`
 - macOS: `~/Library/Application Support/PillCrew Sniper`
 - Linux: `~/.config/PillCrew Sniper`
+
+## Your own keys and endpoints
+
+| Setting | What it does | Where to get it |
+| --- | --- | --- |
+| `rpcUrl` | Your own Solana RPC, tried before the public nodes. A paid node (Helius, Triton, QuickNode) is the single biggest speed-up for a live desk: the feed, the entry price read and every transaction go through it | your provider's dashboard |
+| `pumpdevKey` | The live trade stream (launches and per-coin trades). 50,000 messages a month on the free plan, launches are not counted | pumpdev.io |
+| `jupiterKey` | Sent as `x-api-key` on every Jupiter call: the backup swap route, the price service and the token lists. The public door answers about one request a second and then refuses the whole connection, which is exactly the state that made exits wait for a price | portal.jup.ag |
+| `incineratorKey` | Burns leftovers and closes the empty accounts, returning the rent (2% of what is recovered). Closing empty accounts is free in the Wallet tab without a key | Sol Incinerator dashboard |
+| `feedSource` | Which launch door to use: `auto`, `chain`, `pumpdev`, `pumpportal` | - |
+
+Keys are validated (letters, digits, `.`, `_`, `-` only), are stored locally, are never printed back into the
+window, are never logged, and are **never** included in a shared settings code.
+
+## The clocks and the cost gate
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `minTokenAgeSec` | 0 (off) | Do not buy a coin younger than this. A launch five seconds old has no tape to judge - its buyers are the dev and his friends |
+| `maxTokenAgeSec` | 0 (off) | Do not buy a coin older than this. The whole-life version of the five minute ceiling: past it the move has happened |
+| `maxRoundTripPct` | 20 | Refuse any ticket whose round trip (both fees plus both tips) costs more than this share of it. **5% is the floor**: at 0.001 SOL the two tips alone are 40% of the ticket, and a desk with no gate loses the ticket to its own fees |
 
 ## Styles
 
