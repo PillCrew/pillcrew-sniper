@@ -72,8 +72,18 @@ assert.match(line, /first rung/, 'and the first rung');
   assert.strictEqual(hi.maxPositions, 2);
   assert.strictEqual(hi.simpleMode, false, 'the capital preset keeps advanced entry checks enabled');
   assert.ok(hi.takeProfitPct / hi.stopLossPct >= 4, 'and pays four losses with one winner');
+  // RULE CHANGED 2026-11-05 (1.0.2, the owner's own settings code): the shipped plan is an 80% target against a 45% stop -
+  // a coin is given room to run, and the fee gate keeps tickets that cannot pay for that room out of it. What a style
+  // still may not do is carry a ticket.
   const bal = PROFILES.balanced;
-  assert.strictEqual(bal.takeProfitPct, bal.stopLossPct, 'the shipped plan is symmetric: 50% wins is break-even');
+  assert.strictEqual(bal.takeProfitPct, 80);
+  assert.strictEqual(bal.stopLossPct, 45);
+  assert.strictEqual(bal.maxHoldSec, 500);
+  assert.strictEqual(bal.minBuyers, 50);
+  assert.strictEqual(bal.maxPositions, 10);
+  assert.strictEqual(bal.maxBuysPerMin, 30);
+  assert.strictEqual(bal.simpleMode, false, 'the corrected plan runs the full desk');
+  assert.strictEqual(bal.maxRoundTripPct, 8);
 }
 
 console.log('Share tests passed');

@@ -553,15 +553,37 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   // graduated, and its entry price then treated the PumpSwap row as a pool to buy on. $BURNIT opened and stopped out
   // 32.9% down six seconds later, $Microduck at -93.6%. One place decides it now (`_markMarket`), at both doors.
   {
+    // RULE CHANGED 2026-11-05 (1.0.2): the shipped plan's target is 80%, so this case names the target it is testing -
+    // it is about what is net of fees, not about where the shipped target sits.
     const e5 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-dex-')), 's.json', DEFAULTS));
     clearInterval(e5._bal); clearInterval(e5._ui); e5.refreshBalance = () => {};
     e5._adopt({ mint: 'SWAP1', source: 'market', hint: { symbol: 'SW1', dexId: 'pumpswap', priceNative: 0.0000001, buys: 60, sells: 5, change5m: 10 } });
     const g = e5.tokens.get('SWAP1');
     assert.strictEqual(g.graduated, true, 'a hint from PumpSwap is a graduated coin from its first second');
     assert.match(e5._eval(g, Date.now()).reason, /Graduated to PumpSwap/, 'and it is refused like any graduated coin');
-    // The board can also say the opposite, and then the flag follows it.
+    // RULE CHANGED 2026-11-05 (1.0.2): a curve row does NOT clear the flag any more - that is how a frozen fossil got to
+    // set the market cap of a graduated coin. The flag is sticky for the life of the coin.
     e5._applyMarket('SWAP1', { mint: 'SWAP1', symbol: 'SW1', priceNative: 0.0000001, priceUsd: 0.00001, mcapUsd: 1000, dexId: 'pumpfun', quoteMint: WSOL, buys: 30, sells: 5 });
-    assert.strictEqual(e5.tokens.get('SWAP1').graduated, false, 'a curve row clears it again');
+    assert.strictEqual(e5.tokens.get('SWAP1').graduated, true, 'a curve row cannot un-graduate a coin that traded on PumpSwap');
+    // A coin that was never on PumpSwap is a launch, as before.
+    e5._adopt({ mint: 'LAUNCH1', source: 'launch' });
+    e5._applyMarket('LAUNCH1', { mint: 'LAUNCH1', symbol: 'L1', priceNative: 0.0000002, priceUsd: 0.00002, mcapUsd: 180, dexId: 'pumpfun', quoteMint: WSOL, buys: 30, sells: 5 });
+    assert.strictEqual(e5.tokens.get('LAUNCH1').graduated, false, 'a coin only seen on the curve stays a launch');
+
+    // RULE ADDED 2026-11-05 (1.0.2, measured on the owner's `$VC`: "peaked +3102.1%" while the take profit booked +77.6%):
+    // a graduated coin keeps its old pump.fun pair listed, frozen at the graduation figure. That row is not "foreign", so
+    // it used to be allowed to set the market cap - a thirty-one-fold peak out of a fossil. The same `_ownPool` rule that
+    // guards the position price now guards the market cap.
+    const g2 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-fossil-')), 's.json', DEFAULTS));
+    clearInterval(g2._bal); clearInterval(g2._ui); g2.refreshBalance = () => {};
+    g2._adopt({ mint: 'FOSSIL1', source: 'market', hint: { symbol: 'FOS', priceNative: 0.0000002, dexId: 'pumpswap' } });
+    const fossil = g2.tokens.get('FOSSIL1');
+    fossil.lastStreamAt = 0;
+    const before = fossil.mc;
+    g2._applyMarket('FOSSIL1', { mint: 'FOSSIL1', symbol: 'FOS', priceNative: 0.0006, priceUsd: 0.06, mcapUsd: 540000, dexId: 'pumpfun', quoteMint: WSOL, buys: 30, sells: 5 });
+    assert.strictEqual(fossil.mc, before, 'the frozen curve of a graduated coin cannot set its market cap');
+    g2._applyMarket('FOSSIL1', { mint: 'FOSSIL1', symbol: 'FOS', priceNative: 0.0000002, priceUsd: 0.00002, mcapUsd: 180, dexId: 'pumpswap', quoteMint: WSOL, buys: 30, sells: 5 });
+    assert.ok(fossil.mc > 0, 'its own PumpSwap pool still can');
     // And a hint that says nothing leaves the coin a launch, which is the normal case.
     e5._adopt({ mint: 'NOSWAP', source: 'launch', hint: { symbol: 'NS', buys: 5, sells: 1 } });
     assert.ok(!e5.tokens.get('NOSWAP').graduated, 'a hint with no dex is not graduated');

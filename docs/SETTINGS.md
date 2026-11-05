@@ -67,45 +67,44 @@ ahead, not 12% before it paid for itself. See [Why the percentages are net](#why
 
 | Setting | Safe | Balanced (the shipped plan) | High roller |
 | --- | --- | --- | --- |
-| Minimum score | 70 | 78 | 78 |
-| Buyers needed (20 second window) | 6 | 30 | 30 |
+| Minimum score | 70 | 50 (not a gate in the simple plan) | 78 |
+| Buyers needed (20 second window) | 6 | 70 | 30 |
 | Net buying needed (SOL) | 2 | 2 | 2 |
-| Market cap band (SOL) | 20 to 80 | 60 to 500 | 60 to 500 |
-| Take profit (%) | 60 | 20 | 60 |
+| Market cap band (SOL) | 20 to 80 | 60 to 15000 | 60 to 500 |
+| Pool depth needed (USD) | 4000 | 4000 | 4000 |
+| Five minute band (%) | off | off | off |
+| Take profit (%) | 60 | 80 | 60 |
 | First take profit (%) / how much | 18 / 50 | off / off | off / off |
-| Stop loss (%) | 6 | 20 | 12 |
-| Max hold (seconds) | 150 | 180 | 240 |
-| Trailing stop arms at / gives back (%) | 14 / 8 | off / off | off / off |
+| Stop loss (%) | 6 | 45 | 12 |
+| Max hold (seconds) | 150 | 500 | 240 |
+| Trailing stop arms at / gives back (%) | 14 / 8 | 14 / 8 (inert while simple is on) | off / off |
 | Break even after a peak of (%) | off | off | off |
-| Slippage ceiling (%) | 8 | 15 | 15 |
+| Slippage ceiling (%) | 8 | 8 | 15 |
 | Priority fee ceiling (SOL) | 0.0002 | 0.0002 | 0.0005 |
-| Coins held at once | 1 | 3 | 6 |
+| Coins held at once | 1 | 6 | 2 |
+| Buys per minute | 8 | 10 | 4 |
+| Session loss limit (SOL) | 0.08 | 1 | 0.04 |
+| Pause after losses in a row / minutes | 5 / 8 | 10 / 5 | 5 / 8 |
+| Creator bag allowed (SOL / %) | 3 / 35 | 12 / 30 | 3 / 35 |
+| One wallet may buy (%) | 45 | 40 | 45 |
+| Fee gate (% of ticket) | 20 | 8 | 8 |
 
-**The High roller style is the plan for a serious bankroll, and it is the mirror image of Balanced.** At a big
-ticket the round trip costs about 3% of it instead of 5.4%, so a loss can be cut cheaply and a winner can be
-left to run: a 12% stop costs an eighth of a ticket and a 60% target pays for five of them. Measured in paper
-on the live market, the shape that loses money is the opposite one - a **wide** stop, because the rug that
-gaps to zero takes the whole ticket whether the stop sits at 12 or at 35, and a **small** target, because it
-caps the one trade that pays for the day. A style never raises the ticket: a press of a card must not move
-the money at risk. At 0.5 SOL a ticket and above the fees stop mattering and this plan is the one to run.
+**Balanced is the owner's own plan** (`PCS1~eyJ2IjoxLCJwIjoiYmFsYW5jZWQi…`), and it is built around one idea:
+**wait for a crowd, then give it room.** Fifty distinct wallets and 2 SOL of net buying inside a 60-15000 SOL band
+is a high bar, so the coin that passes it is given a wide stop (45%), a distant target (80%) and 500 seconds. The
+five minute band is off - the crowd test replaces it - and the score is computed and shown but does not gate
+anything while the simple mode is on.
 
-**Balanced is the measured plan, and it is the same size in both directions.** The target and the stop are
-both 20% *net*, so a coin that reaches the target pays for one that does not: at a 50% hit rate the desk is
-level, and above it the desk is ahead. The shape it replaced - a 90% target against a 9% stop, then a 130%
-target against the same stop - needed a run to win and paid to lose, and three measured paper sessions on
-the live market produced 28% wins over eighteen trades. A 20/20 pair is also the only shape a keyless build
-can honour: the exits are urgent (a stop is never held waiting for a second opinion) and a target that is
-twenty points away is reachable inside a three minute hold.
+Two things ship with it that are worth knowing before changing anything:
 
-**Balanced ships with the simple mode on**, so only the target, the stop, the time limit and one
-give-back floor decide when a position leaves. That is deliberate: the first rung, the trail and the break
-even are exactly the rules that a small ticket cannot afford to test one at a time, and on a three minute
-window there is no time for a runner to develop. The give-back floor is the one protective rule that stays,
-because a coin that peaked at +61% and closed at -89% is the whole session's loss.
+- **the fee gate is 8% of the ticket.** At 0.1 SOL a round trip is about 3.9%, so the plan has room; at 0.01 SOL the
+  tips alone are 10% and the desk refuses the configuration in words instead of trading at a loss;
+- **the trailing stop's 14/8 is carried but inert** while the simple mode is on: the simple ladder is the target, the
+  stop, the time limit and the give-back floor. Turning the simple mode off makes those two numbers live again.
 
 **Four checks stay on in the simple mode even though they are filters**, because they only ever *refuse* a
-coin and never cost a request: the creator's bag (`maxDevHoldPct`, `maxDevBuySol`), one wallet buying the
-whole tape (`maxTraderSharePct`) and a pool too thin to absorb an exit (`minLiqUsd`). They read the row the
+coin and never cost a request: the creator's bag (`maxDevHoldPct` 30%, `maxDevBuySol` 12 SOL), one wallet buying
+40% of the tape (`maxTraderSharePct`) and a pool too thin to absorb an exit (`minLiqUsd` 4000). They read the row the
 entry was judged on anyway. Measured: one rug (`$SAFU`, peaked at +3.5%, stopped at **-101.4%**) took a whole
 session, and a coin whose creator holds most of the supply is the coin that does that.
 

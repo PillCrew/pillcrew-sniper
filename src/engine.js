@@ -68,6 +68,12 @@ const TRAIL_GIVE_FRAC = 0.45;
 // The rules that are watching money leave rather than waiting for a move to prove itself. Their hold is
 // `STOP_HOLD_MS` at most (see `_riskHoldMs`), never the profit rule's `triggerHoldMs`.
 const RISK_RULES = new Set(['Stop loss', 'Trailing stop', 'Break even', 'Peak give-back']);
+// RULE ADDED 2026-11-05 (1.0.2): a PROFIT rule may not act on a price nobody has refreshed. Measured on the owner's own
+// trade (`$NIGGER · Peak give-back (peaked at +30.7%) · -13.1%`): the position sat on a stale number while the coin
+// fell, and the rule then booked the first reading that arrived, 28 points under its own level. A stop, the creator
+// selling and the time limit still act on whatever they have - they protect money. A target protects a gain, and a
+// gain measured on a stale price is not a measurement.
+const PROFIT_FRESH_MS = 1500;
 const TX_GUARD_MAX_SOL = 0.01;
 const MAX_TRACKED = 400;
 // A pump.fun launch is one billion tokens, so "SOL paid per whole token × one billion" is the market cap every
@@ -102,38 +108,51 @@ const PROFILES = {
     takeProfitPct: 60, stopLossPct: 6, maxHoldSec: 150, slippagePct: 8, priorityFeeSol: 0.0002,
     tp1Pct: 18, tp1SellPct: 50, trailArmPct: 14, trailGivePct: 8, breakEvenPct: 0,
   },
+  // RULE CHANGED 2026-11-05 (1.0.2, the owner's own settings code `PCS1~eyJ2IjoxLCJwIjoiYmFsYW5jZWQi...`): `balanced`
+  // IS the shipped plan now - the numbers below are the ones the owner trades and asked to ship as the default.
+  //
+  // Read it as one plan, because that is what it is:
+  //  - the ENTRY waits for a crowd: seventy distinct wallets in the window, a net 2 SOL of buying, a market cap between
+  //    80 and 1500 SOL, and a pool of at least 4000 USD. The five minute band is OFF, and so is the score gate while the
+  //    simple mode is on - the coin is judged on the crowd and on the safety checks, not on a momentum window;
+  //  - the SAFETY checks are on and they are not tuning: a creator holding 30% or more, a creator who bought more than
+  //    12 SOL, one wallet doing 40% of the buying, or a pool too thin to sell into all refuse the coin;
+  //  - the EXIT gives the coin room: an 80% target against a 45% stop, held up to 500 seconds. The stop is wide on
+  //    purpose - with the crowd bar this high, the coin is meant to be given time, and the fee gate below is what keeps
+  //    a small ticket out of that game;
+  //  - the fee gate is 8% of the ticket, so the cheapest ticket that can pay its own tips is the one this plan ships with.
   balanced: {
-    minScore: 78, minBuyers: 30, minNetFlowSol: 2, minMcSol: 60, maxMcSol: 500,
-    takeProfitPct: 20, stopLossPct: 20, maxHoldSec: 180, slippagePct: 15, priorityFeeSol: 0.0002,
-    tp1Pct: 0, tp1SellPct: 0, trailArmPct: 0, trailGivePct: 0, breakEvenPct: 0,
+    minScore: 50, minBuyers: 50, minNetFlowSol: 2, minMcSol: 60, maxMcSol: 15000,
+    takeProfitPct: 80, stopLossPct: 45, maxHoldSec: 500, slippagePct: 8, priorityFeeSol: 0.0002,
+    tp1Pct: 0, tp1SellPct: 0, trailArmPct: 14, trailGivePct: 8, breakEvenPct: 0,
+    // The ticket is NOT part of a style: a press of a card must never raise the money at risk (see `settings:profile`).
+    buyAmountSol: undefined,
+    // The FULL desk, not the simple one: the trail (14/8) is live, the score gate is live at 50, and the five minute
+    // band is off. Ten slots and thirty buys a minute are the owner's own numbers, and the session cap is one SOL.
+    simpleMode: false, maxPositions: 10, maxBuysPerMin: 30,
+    watchSec: 3, entryWindowSec: 45, minLiqUsd: 4000, triggerHoldMs: 400,
+    sessionLossLimitSol: 1, maxLossStreak: 10, pauseMinutes: 5,
+    maxDevBuySol: 12, maxDevHoldPct: 30, maxTraderSharePct: 40,
+    maxChange5mPct: 0, minChange5mPct: 0, deepEntry: true, minHolders: 0, maxBuyers: 0,
+    minTokenAgeSec: 0, maxTokenAgeSec: 0, maxRoundTripPct: 8,
   },
   aggressive: {
     minScore: 78, minBuyers: 30, minNetFlowSol: 2, minMcSol: 60, maxMcSol: 500,
     takeProfitPct: 60, stopLossPct: 12, maxHoldSec: 240, slippagePct: 15, priorityFeeSol: 0.0005,
     tp1Pct: 0, tp1SellPct: 0, trailArmPct: 0, trailGivePct: 0, breakEvenPct: 0,
-    // The ticket is NOT part of a style: a press of a card must never raise the money at risk (see `settings:profile`).
-    // The card says what size makes this plan work, and the operator types it.
     simpleMode: false, maxPositions: 2, maxBuysPerMin: 4, minTokenAgeSec: 5, maxRoundTripPct: 8,
   },
 };
 const AUTOPILOT = {
   ...PROFILES.balanced,
   profile: 'balanced',
-  simpleMode: false,
-  maxPositions: 1,
-  maxBuysPerMin: 3,
-  sessionLossLimitSol: 0.04,
-  maxLossStreak: 3,
-  pauseMinutes: 10,
-  minTokenAgeSec: 5,
-  maxRoundTripPct: 8,
-  slippagePct: 8,
-  trailArmPct: 14,
-  trailGivePct: 8,
-  stopLossPct: 12,
+  // The one press preset applies the shipped plan, and the ticket stays the operator's own decision - `settings:autopilot`
+  // never raises it (see main.js).
+  buyAmountSol: 0.1,
   smartFees: true,
   paperLatencyMs: 300,
 };
+delete AUTOPILOT.buyAmountSol;   // kept out of the preset: the card names the size, the operator types it
 
 const DEFAULTS = {
   mode: 'paper',
@@ -145,7 +164,9 @@ const DEFAULTS = {
   paperFailurePct: 0,
   paperSeed: 1,
   profile: 'balanced',
-  buyAmountSol: 0.02,
+  // The ticket this plan is built for: at 0.1 SOL the round trip is about 3.9% of it, which is what the 8% fee gate
+  // leaves room for. A smaller ticket is refused by that gate instead of being quietly traded at a loss.
+  buyAmountSol: 0.1,
   maxPositions: 3,
   maxBuysPerMin: 20,
   watchSec: 2,
@@ -486,6 +507,7 @@ class Engine extends EventEmitter {
       .filter((p) => !p.paper)
       .map((p) => ({
         mint: p.mint, symbol: p.symbol, entryMc: p.entryMc, mc: p.mc, peakMc: p.peakMc, solIn: p.solIn,
+        pxEntry: p.pxEntry || null,
         feeBuy: p.feeBuy, feeExitEst: p.feeExitEst, openedAt: p.openedAt, tp1Done: Boolean(p.tp1Done), sig: p.sig || null,
         adopted: Boolean(p.adopted), graduated: Boolean(p.graduated),
         pendingSellSig: p.pendingSell ? p.pendingSell.sig : null, sellSig: p.sellSig || null,
@@ -510,6 +532,8 @@ class Engine extends EventEmitter {
         // No made-up numbers: a record without an entry price is measured from the first price it is seen at, and
         // `_pnlPct` reads 0 until then, so nothing sells on a reference that was never paid.
         entryMc: Number(rec.entryMc) || 0, mc: Number(rec.mc) || Number(rec.entryMc) || 0,
+        // A restored position remembers whether it opened on the pool's own price (see `_pricePosition`).
+        pxEntry: rec.pxEntry === 'curve' ? 'curve' : (rec.pxEntry === 'board' ? 'board' : null),
         peakMc: Number(rec.peakMc) || Number(rec.mc) || Number(rec.entryMc) || 0,
         solIn: Number(rec.solIn) || this.s.buyAmountSol, feeBuy: Number(rec.feeBuy) || 0,
         // A restored position keeps the exit tip it was priced with, or gets today's if the record predates the field.
@@ -999,6 +1023,10 @@ class Engine extends EventEmitter {
         this._posBoardAt = now;
         const quietHeld = mints.filter((mint) => {
           const t = this.tokens.get(mint);
+          const p = this.positions.get(mint);
+          // A position that asked for a fresh reading (see `PROFIT_FRESH_MS`) is asked for directly, even when its
+          // stream is talking: the number the stream carried is the one that was already judged too old to sell on.
+          if (p && p.wantPx && !p.closing) return true;
           return !(t && t.mc > 0 && now - (t.lastStreamAt || 0) < 2000);
         });
         if (quietHeld.length) {
@@ -1062,6 +1090,16 @@ class Engine extends EventEmitter {
     return dex === 'pumpfun' || dex === 'pumpswap' || dex === 'pump-amm';
   }
 
+  /**
+   * How long the entry may wait for the pool's own price. A coin whose trade stream spoke within the last two seconds
+   * has a price already, so the read is confirmation and gets 450 ms; otherwise the pool is the only number there is and
+   * gets the full 700. Split out so the rule can be read (and tested) instead of living inside an options object.
+   */
+  _entryBudget(t) {
+    const fresh = t && t.lastStreamAt && Date.now() - t.lastStreamAt < 2000;
+    return fresh ? 450 : 700;
+  }
+
   _pricePosition(p, now = Date.now()) {
     if (p.closing) return;
     // A holding adopted from the wallet can arrive with no reference price. The first price it is seen at becomes
@@ -1072,7 +1110,16 @@ class Engine extends EventEmitter {
       const next = t.mc;
       const seeded = p.pxSeed && p.pxSource === 'curve';
       const bar = seeded ? 0.2 : WILD_MOVE_FRAC;
-      if (p.mc > 0 && Math.abs(next / p.mc - 1) > bar) {
+      // RULE ADDED 2026-11-05 (1.0.2, measured on the owner's own trade: `$NIGGER · Peak give-back (peaked at +30.7%) ·
+      // -13.1%`): a FALL is the market and is taken on the first reading, exactly as the quote lane has always done.
+      // Holding a fall back until a "clean" second print was the whole gap: consecutive prints of a dying coin are 25%
+      // and 30% apart, the guard demanded two within 10%, so the position sat on the stale price while the coin
+      // collapsed and then booked the first print that happened to look tidy - 28 points under the level it fired at.
+      // The second look is kept for what it was written for: a spike UP, and a fall away from an entry that was itself
+      // somebody else's number (a board row, the $sol case).
+      const falling = p.mc > 0 && next < p.mc;
+      const trustedEntry = seeded || p.pxEntry === 'curve';
+      if (p.mc > 0 && !(falling && trustedEntry) && Math.abs(next / p.mc - 1) > bar) {
         const prev = p.pxOddChain;
         p.pxOddChain = next;
         if (!(prev > 0 && Math.abs(next / prev - 1) < 0.1)) return;
@@ -1083,6 +1130,7 @@ class Engine extends EventEmitter {
       p.mc = next;
       p.pxAt = now;
       p.pxSource = 'chain';
+      p.wantPx = 0;
       this._pxDirty = true;
       return;
     }
@@ -1096,6 +1144,7 @@ class Engine extends EventEmitter {
       // The anchor IS this reading: the price did not move, and that has to count as a fresh look at the coin, or a
       // position whose first quote arrived late would look unseen and be sold by the watchdog below.
       p.pxAt = now;
+      p.wantPx = 0;
       this._pxDirty = true;
       return;
     }
@@ -1111,6 +1160,7 @@ class Engine extends EventEmitter {
     p.mc = next;
     p.pxAt = now;
     p.pxSource = 'quote';
+    p.wantPx = 0;
     this._pxDirty = true;
   }
 
@@ -1284,8 +1334,12 @@ class Engine extends EventEmitter {
 
   _markMarket(t, dexId) {
     if (!t || !dexId) return;
-    if (dexId === 'pumpswap' || dexId === 'pump-amm') t.graduated = true;
-    else if (dexId === 'pumpfun') t.graduated = false;
+    if (dexId === 'pumpswap' || dexId === 'pump-amm') { t.graduated = true; return; }
+    // RULE CHANGED 2026-11-05 (1.0.2, measured on the owner's `$VC`: "peaked +3102.1%" on a four minute hold): a coin
+    // that has traded on PumpSwap KEEPS its own market. Its old pump.fun pair stays listed for ever, frozen at the
+    // graduation figure, and a row from it is not evidence that the coin came back to the curve - treating it as such let
+    // a fossil set the market cap (and un-graduate a coin that then got bought as a launch).
+    if (dexId === 'pumpfun' && !t.graduated) t.graduated = false;
   }
 
   _applyMarket(mint, row, opts = {}) {
@@ -1308,7 +1362,12 @@ class Engine extends EventEmitter {
     if (row.symbol && row.symbol !== '?') t.symbol = row.symbol;
     if (row.name) t.name = row.name;
     if (row.pairCreatedAt > 0) t.launchedAt = row.pairCreatedAt;
-    if (mcSol > 0 && !foreignPool && now - (t.lastStreamAt || 0) > STREAM_FRESH_MS) {
+    // RULE CHANGED 2026-11-05 (1.0.2, measured on the owner's own `$VC`: "peaked +3102.1%" on a coin held four minutes,
+    // while the take profit booked +77.6%): the exchange filter is not enough on its own. A GRADUATED coin keeps its old
+    // pump.fun pair listed, frozen at the graduation figure, and a `pumpfun` row is not "foreign" - so it was allowed to
+    // set the market cap of a coin that trades on PumpSwap and produce a thirty-one-fold "peak" out of a fossil. The
+    // rule is the same one the position price lane uses (`_ownPool`), applied where the market cap is written.
+    if (mcSol > 0 && this._ownPool(row, t) && now - (t.lastStreamAt || 0) > STREAM_FRESH_MS) {
       t.mc = mcSol;
       t.mcHist.push([now, mcSol]);
       if (t.mcHist.length > 150) t.mcHist.shift();
@@ -1325,7 +1384,11 @@ class Engine extends EventEmitter {
       if (this.positions.has(mint)) continue;
       const age = (now - t.createdAt) / 1000;
       const idle = (now - t.lastActivity) / 1000;
-      if (age > 900 || t.status === 'skipped' || (idle > 120 && age > this.s.entryWindowSec) || (force && idle > 45)) {
+      // RULE CHANGED 2026-11-05 (1.0.3, the owner: "coins tracked ubywa, raz 250 potem 190"): the working set was trimmed
+      // after two minutes of quiet, and the sweep then adopted the same coins again - a sawtooth the eye reads as a bug.
+      // A quiet coin is now kept for four minutes (six when the map is full), which is still shorter than any coin's useful
+      // life on this market and stops the churn.
+      if (age > 1200 || t.status === 'skipped' || (idle > 240 && age > this.s.entryWindowSec) || (force && idle > 60)) {
         this.tokens.delete(mint);
       }
     }
@@ -1568,7 +1631,10 @@ class Engine extends EventEmitter {
     let pool = 0;
     try {
       if (!this.offline) {
-        const curves = await readCurves((fn, opts) => this.rpcCall(fn, { attempts: 1, budgetMs: 700, ...opts }), [t.mint]);
+        // RULE CHANGED 2026-11-05 (1.0.2, the owner: "bot też czasami za wolno kupuje"): a coin whose own tape is fresh
+        // already has a price in hand, so the curve read is only confirmation and gets a shorter budget - 450 ms instead
+        // of 700. On a coin with no recent trade the full wait stays, because then the pool IS the only number.
+        const curves = await readCurves((fn, opts) => this.rpcCall(fn, { attempts: 1, budgetMs: this._entryBudget(t), ...opts }), [t.mint]);
         const row = curves.get(t.mint);
         if (row && row.mcSol > 0 && !row.complete) pool = row.mcSol;
       }
@@ -1718,6 +1784,9 @@ class Engine extends EventEmitter {
         .catch((e) => e);
     }
     const px = await pxP;
+    // How long the pool took to answer. The owner's complaint was "the bot sometimes buys too slowly", and the only way
+    // to answer it is with the number: this is the wait that decides whether the entry lands or the price runs away.
+    const priceMs = Date.now() - now;
     if (px.refuse) {
       this.positions.delete(t.mint);
       this._releaseSpend(p.spendEntry);
@@ -1735,6 +1804,9 @@ class Engine extends EventEmitter {
     p.pxAt = Date.now();
     p.pxSeed = true;
     p.pxSource = px.src === 'curve' ? 'curve' : 'entry';
+    // Where the entry price came from, kept for the life of the position: a fall is taken at once only when the number
+    // the position opened on was the pool's own (see `_pricePosition`).
+    p.pxEntry = px.src === 'curve' ? 'curve' : 'board';
     this.stats.entryPx[px.src === 'curve' ? 'curve' : 'board']++;
     this.buyTimes.push(now);
     // A coin that was just bought has to be priced at its curve from the first second, not four seconds later when
@@ -1744,7 +1816,10 @@ class Engine extends EventEmitter {
       + `${s.simpleMode ? ', simple plan' : `, score ${ev.score}`}`
       // A board price is the risky one: it is somebody else's row, and the pool is the market. Naming it costs one
       // word and answers "why did it stop out at once" without anybody having to read the log of a coin that is gone.
-      + `${px.src === 'board' ? `, board price (${px.why || 'no pool'})` : ''})`);
+      + `${px.src === 'board' ? `, board price (${px.why || 'no pool'})` : ''}`
+      // A slow price is named on the buy line: over 900 ms the entry waited for the pool, and that wait is the one
+      // thing in the path that can be shortened (see `_entryBudget`).
+      + `${priceMs > 900 ? ` · pool price took ${priceMs} ms` : ''}`);
     try {
       if (paper) {
         await this._paperWait();
@@ -2524,7 +2599,7 @@ class Engine extends EventEmitter {
       // break even are advanced rules, and while the simple mode is on they are off by definition.
       else if (!s.simpleMode && s.tp1Pct > 0 && !p.tp1Done && pnl >= s.tp1Pct && p.entrySettled !== false) { rule = 'Take profit part 1'; why = rule; pct = clamp(s.tp1SellPct, 10, 90); }
       else if (pnl <= -s.stopLossPct) { rule = 'Stop loss'; why = rule; }
-      else if (s.simpleMode && p.entrySettled !== false && peak >= SIMPLE_RUN_ARM && pnl <= peak / 2) { rule = 'Peak give-back'; why = `${rule} (peaked at +${peak.toFixed(1)}%)`; }
+      else if (s.simpleMode && p.entrySettled !== false && peak >= SIMPLE_RUN_ARM && pnl <= peak / 2) { rule = 'Peak give-back'; why = `${rule} (peaked at +${peak.toFixed(1)}%, level +${(peak / 2).toFixed(1)}%)`; }
       // After the first rung has been banked the rest is a runner, and a runner is given less room: the whole point of
       // taking the first bite is that the remainder can be sold at the top instead of giving the move back.
       else if (!s.simpleMode && p.entrySettled !== false && s.trailArmPct > 0 && s.trailGivePct > 0 && peak >= s.trailArmPct && pnl <= peak - this._trailGive(peak)) { rule = 'Trailing stop'; why = `${rule} (peaked at +${peak.toFixed(1)}%)`; }
@@ -2533,6 +2608,13 @@ class Engine extends EventEmitter {
       else if (!s.simpleMode && p.entrySettled !== false && s.breakEvenPct > 0 && peak >= s.breakEvenPct && pnl <= 0) { rule = 'Break even'; why = rule; }
       else if ((now - p.openedAt) / 1000 >= s.maxHoldSec) { rule = 'Time limit'; why = rule; }
       if (!why) { p.trigger = null; continue; }
+      // The freshness guard (see `PROFIT_FRESH_MS`): a rule that protects a gain waits for a fresh reading, and the
+      // position asks for one instead of acting on an old number. Stops and the time limit are not held back.
+      if (rule !== 'Stop loss' && rule !== 'Creator sold' && rule !== 'Time limit' && now - (p.pxAt || p.openedAt || 0) > PROFIT_FRESH_MS) {
+        p.wantPx = now;
+        p.trigger = null;
+        continue;
+      }
       if (rule === 'Creator sold' || rule === 'Time limit') { this._sell(p, why, pct); continue; }
       const seen = p.trigger;
       if (!seen || seen.rule !== rule || now - seen.at > 3000) { p.trigger = { rule, at: now, pxAt: p.pxAt || 0, seq: this._seq }; continue; }

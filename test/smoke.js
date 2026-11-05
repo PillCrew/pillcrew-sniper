@@ -137,7 +137,9 @@ const { Engine, DEFAULTS } = require('../src/engine');
   // creator bought a huge bag at launch -> skipped
   const bag = 'Bag1111111111111111111111111111111111111111';
   e.ingest({ txType: 'create', mint: bag, name: 'Bag', symbol: 'BAG', creator: 'devwallet', traderPublicKey: 'devwallet', marketCapSol: 30, fromChain: true });
-  e.ingest({ txType: 'buy', mint: bag, traderPublicKey: 'devwallet', solAmount: 6, marketCapSol: 45, fromChain: true });
+  // RULE CHANGED 2026-11-05 (1.0.2): the shipped plan allows a creator bag of 12 SOL (maxDevBuySol), so this case spends
+  // 15 to be over it - the rule it tests is unchanged.
+  e.ingest({ txType: 'buy', mint: bag, traderPublicKey: 'devwallet', solAmount: 15, marketCapSol: 45, fromChain: true });
   for (let i = 0; i < 6; i++) e.ingest({ txType: 'buy', mint: bag, traderPublicKey: 'u' + i, solAmount: 0.7, marketCapSol: 46 + i, fromChain: true });
   e._evalOne(e.tokens.get(bag), Date.now());
   assert.strictEqual(e.tokens.get(bag).reason, 'Creator holds too much');

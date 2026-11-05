@@ -52,8 +52,10 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
   const at = (pct) => 100 * (1 + pct / 100);
 
   // Take profit fires on the net move, and a 40% target needs the fee drag on top.
+  // RULE CHANGED 2026-11-05 (1.0.2): the shipped target is 80%, so this case names the 40% target it is testing - it is
+  // about what is net of fees.
   {
-    const e = engine();
+    const e = engine({ takeProfitPct: 40 });
     const p = open(e, 'TP');
     p.mc = at(30);
     e._tick(); e._tick();
@@ -916,7 +918,10 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     // The book is a map, so a second entry does not double the position - it OVERWRITES it, having spent the SOL: the
     // only witness is how many times money left.
     assert.strictEqual(buys.length, 1, `one coin is bought once, got ${buys.length}`);
-    assert.ok(Math.abs((cashBefore - e.paper.balance) - (0.02 * 1.02 + 0.0002)) < 0.01, 'and the wallet was debited once');
+    // The ticket is read from the plan, not typed here: the shipped default moved from 0.02 to 0.1 SOL in 1.0.2 and a
+    // hard-coded ticket turns that into a fake failure.
+    const ticket = e.s.buyAmountSol;
+    assert.ok(Math.abs((cashBefore - e.paper.balance) - (ticket * 1.0175 + e.s.priorityFeeSol)) < ticket * 0.2, 'and the wallet was debited once');
   }
 
   // The buy path reserves a slot before pricing, but the UI must not show an unpriced candidate.
@@ -969,6 +974,70 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     e.tokens.get('STEP').mc = 92;
     e._pricePosition(q, Date.now());
     assert.ok(Math.abs(q.mc - 92) < 0.01, 'an ordinary move is taken on the first reading');
+
+    // RULE CHANGED 2026-11-05 (1.0.2, measured on the owner's own trade: `$NIGGER · Peak give-back (peaked at +30.7%) ·
+    // -13.1%`): a FALL is the market and is taken on the FIRST reading when the position opened on the pool's own price.
+    // Holding it back until two prints happened to agree within 10% is what let a dying coin keep a stale number and
+    // then book the first tidy print 28 points under the level that fired.
+    const fall = open(e, 'FALL');
+    fall.mc = 100; fall.pxAt = Date.now(); fall.pxSeed = false; fall.pxEntry = 'curve';
+    e.tokens.get('FALL').lastStreamAt = Date.now();
+    e.tokens.get('FALL').mc = 70;                     // one print, a third down
+    e._pricePosition(fall, Date.now());
+    assert.ok(Math.abs(fall.mc - 70) < 0.01, `a fall from a pool-priced entry is taken at once, got ${fall.mc}`);
+
+    // A position that opened on somebody else's number (a board row) still waits for the second look: the $sol case.
+    const board = open(e, 'BOARDFALL');
+    board.mc = 100; board.pxAt = Date.now(); board.pxSeed = false; board.pxEntry = 'board';
+    e.tokens.get('BOARDFALL').lastStreamAt = Date.now();
+    e.tokens.get('BOARDFALL').mc = 40;                // a sixtieth percent fall, past the wild-move bar
+    e._pricePosition(board, Date.now());
+    assert.strictEqual(board.mc, 100, 'a board-priced entry still asks for a second look before believing a fall');
+    e.tokens.get('BOARDFALL').mc = 39;
+    e._pricePosition(board, Date.now());
+    assert.ok(Math.abs(board.mc - 39) < 0.01, 'and takes it when the prints agree');
+
+    // A spike UP is still never believed on its own, whatever the entry was.
+    const spike = open(e, 'SPIKE');
+    spike.mc = 100; spike.pxAt = Date.now(); spike.pxSeed = false; spike.pxEntry = 'curve';
+    e.tokens.get('SPIKE').lastStreamAt = Date.now();    e.tokens.get('SPIKE').mc = 400;
+    e._pricePosition(spike, Date.now());
+    assert.strictEqual(spike.mc, 100, 'a four-fold print is not a market until it prints twice');
+
+    // RULE ADDED 2026-11-05 (1.0.2): a PROFIT rule may not act on a number nobody refreshed. Measured on the owner's own
+    // trade, a give-back fired 28 points under its own level because the position had been sitting on a stale price.
+    // A stop still fires - it protects money - but a target or a give-back asks for a fresh reading first.
+    const stale = engine({ simpleMode: true, takeProfitPct: 20, triggerHoldMs: 0 });
+    const sp = open(stale, 'STALE');
+    sp.mc = 130; sp.entryMc = 100; sp.peakMc = 130; sp.pxAt = Date.now() - 5000;   // five seconds of nothing
+    stale.positions.set('STALE', sp);
+    let sold = 0;
+    stale._sell = () => { sold++; };
+    stale._tick();
+    assert.strictEqual(sold, 0, 'a target does not fire on a five second old price');
+    assert.ok(sp.wantPx > 0, 'and the position asks for a fresh one');
+    sp.pxAt = Date.now();                                                            // the price arrives
+    stale._tick();
+    assert.strictEqual(sold, 0, 'the trigger is armed on the first fresh reading, as always');
+    sp.pxAt = Date.now() + 1;                                                        // a second reading confirms it
+    stale._tick();
+    assert.strictEqual(sold, 1, 'and then the rule acts');
+    // A RISK rule is not blocked by the freshness guard: it arms on a stale reading and sells as soon as it can confirm.
+    const sp2 = open(stale, 'STALELOSS');
+    sp2.mc = 60; sp2.entryMc = 100; sp2.pxAt = Date.now() - 5000;
+    stale.positions.set('STALELOSS', sp2);
+    sold = 0;
+    stale._tick();
+    assert.strictEqual(sold, 0, 'the first reading only arms it, exactly as before');
+    assert.ok(!sp2.wantPx, 'and a stop does not wait for a fresh quote the way a target does');
+    sp2.pxAt = Date.now() + 1;
+    stale._tick();
+    assert.strictEqual(sold, 1, 'a stop fires on whatever reading it has');
+
+    // The entry read is shorter when the coin's own tape is fresh: the pool's number is only confirmation then.
+    const budget = stale._entryBudget({ lastStreamAt: Date.now() });
+    assert.strictEqual(budget, 450, 'a fresh stream means a 450 ms read');
+    assert.strictEqual(stale._entryBudget({ lastStreamAt: Date.now() - 9000 }), 700, 'a quiet coin gets the full wait');
   }
 
   // RULE ADDED: the simple plan keeps ONE protective rule. It has no trail of its own, and a coin that peaked at
@@ -1412,7 +1481,9 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
   // RULE ADDED 2026-11-05: the coin's own age is a setting in both directions. A launch younger than the floor has no
   // tape to judge (its buyers are the dev and his friends), and one older than the ceiling has already had its move.
   {
-    const e = engine({ simpleMode: true });
+    // RULE CHANGED 2026-11-05 (1.0.2): the shipped plan asks for 70 buyers, so this case names its own bar - it is
+    // about the two clocks, not about the crowd.
+    const e = engine({ simpleMode: true, minBuyers: 5 });
     e.store.set({ minTokenAgeSec: 20, maxTokenAgeSec: 600 });
     const coin = (mint, ageSec) => {
       const t = { mint, name: 'A', symbol: 'A', creator: 'c', mc: 120, mcHist: [[Date.now() - 3000, 100], [Date.now(), 120]], trades: [], devSold: false, devBuySol: 0, status: 'watching', score: 90, reason: '', lastActivity: Date.now(), lastStreamAt: Date.now(), createdAt: Date.now() - ageSec * 1000 };

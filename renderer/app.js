@@ -116,9 +116,12 @@
     $('#connText').textContent = s.connected ? (label || 'Live feed') : s.running ? 'Connecting…' : 'Offline';
     const cov = s.coverage || {};
     const perMin = s.stats && s.stats.launchesPerMin ? `${s.stats.launchesPerMin}/min` : '0/min';
+    // RULE CHANGED 2026-11-05 (1.0.3, the owner: "Coins tracked 195 też ubywa, raz jest 250 potem spada do 190"): the card
+    // above shows the coins SEEN this session (it only grows); the working map - trimmed as coins go quiet, refilled as new
+    // ones appear - is named here, so a number that moves down is a number that says what it is.
     $('#sFeed').textContent = s.running
-      ? `${perMin} launches · ${cov.trending || 0} trending · ${cov.fresh || 0} live`
-      : 'since start';
+      ? `${cov.total || 0} live now · ${perMin} launches · ${cov.fresh || 0} fresh`
+      : `${cov.total || 0} live now`;
     if (s.rpc) {
       const cur = s.rpc.nodes.find((n) => n.active);
       $('#rpcText').textContent = 'RPC: ' + (cur ? cur.host : 'auto') + (cur && cur.latencyMs != null ? ` · ${cur.latencyMs} ms` : '');
@@ -167,7 +170,10 @@
     $('#sWin').textContent = closed ? Math.round((s.stats.wins / closed) * 100) + '%' : '–';
     $('#sWinSub').textContent = closed ? `${s.stats.wins} wins · ${s.stats.losses} losses` : 'no trades yet';
     $('#sBpm').textContent = s.stats.buysPerMin;
-    $('#sSeen').textContent = (s.coverage && s.coverage.total) || s.stats.seen;
+    // RULE CHANGED 2026-11-05 (1.0.3, the owner: "Coins tracked 195 też ubywa, raz jest 250 potem spada do 190"): the card
+    // showed the WORKING map, which the pruner trims and the sweep refills - correct behaviour that reads as a bug. The big
+    // number is now the coins the desk has taken in this session (it only grows), and the working set is named under it.
+    $('#sSeen').textContent = s.stats.seen || 0;
     $('#sLat').textContent = s.stats.lastLatencyMs == null ? '–' : s.stats.lastLatencyMs;
     $('#sSell').textContent = s.stats.lastSellMs == null ? '–' : s.stats.lastSellMs;
     renderReady(s);

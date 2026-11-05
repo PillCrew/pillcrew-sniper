@@ -3,6 +3,84 @@
 All notable changes to this project are recorded here. The format follows Keep a Changelog and the
 project uses semantic versioning.
 
+## [1.0.3] - 2026-11-05
+
+### Winners stop being given back on a stale price
+
+Measured on the owner's own trades, twice in one evening: `$NIGGER · Peak give-back (peaked at +30.7%) · -13.1%` and
+`$VC · Take profit · peaked +3102.1%` while the take profit booked +77.6%. Two separate faults, both about which number
+the rule is allowed to believe:
+
+- **a profit rule may not act on a price nobody refreshed.** A position that has not been priced for more than
+  **1.5 s** now asks for a fresh reading instead of firing a target or a give-back on the old one, and the price lane
+  answers it directly even when the coin's stream is talking. A stop, the creator selling and the time limit are not
+  held back - they protect money, not a gain;
+- **a fall is the market and is taken at once** when the position opened on the pool's own price. Holding a fall back
+  until two prints agreed within 10% is what let a dying coin sit on a stale number and then book the first tidy print
+  28 points under its level;
+- **a graduated coin keeps its own market for ever.** Its old pump.fun pair stays listed, frozen at the graduation
+  figure; a row from it may no longer set the market cap (that is where a thirty-one-fold "peak" came from), and it may
+  no longer un-graduate a coin that has traded on PumpSwap.
+
+### The shipped plan is the owner's own settings code, third revision
+
+`minBuyers` 50, band **60-15000 SOL**, 10 slots, 30 buys a minute, target 80 / stop 45 / hold 500 s, pause after 10
+losses for 5 minutes, `maxRoundTripPct` 8. The full desk is on (`simpleMode: false`), so the score gate at 50 and the
+trail at 14/8 are live again.
+
+### A buy that is slow now says so
+
+- the pool-price wait is **450 ms instead of 700** when the coin's own tape is fresh (the pool number is only
+  confirmation then), and the full 700 ms stays for a coin with no recent trades;
+- the buy line carries `pool price took N ms` whenever that wait passed 900 ms, because "the bot sometimes buys too
+  slowly" can only be answered with a number.
+
+### The counter that looked like a bug
+
+`Coins tracked` flickered between 190 and 250: it was showing the **working map**, which the pruner trims as coins go
+quiet and the sweep refills. The card now reads **Coins seen** - the coins the desk has taken in this session, a number
+that only grows - with the live map named under it (`N live now · launches/min · fresh`). The pruner also keeps a quiet
+coin for four minutes instead of two, so the map churns less in the first place.
+
+## [1.0.2] - 2026-11-05
+
+### A fall is the market, and is never held back
+
+Measured on the owner's own trade: `$NIGGER · Peak give-back (peaked at +30.7%) · -13.1%`. The rule fired 28 points under
+its own level, and the reason was the price guard, not the exit: consecutive prints of a dying coin were 25% and 30%
+apart, the guard demanded two within 10%, so the position sat on a stale price while the coin collapsed and then booked
+the first print that happened to look tidy.
+
+- a FALL is now taken on the **first** reading when the position opened on the **pool's own** price. That is what the
+  quote lane has always done, and what a stop needs;
+- the second look stays for what it was written for: a spike **up**, and a fall away from an entry that was itself
+  somebody else's number (a board row, the `$sol` case);
+- the entry's provenance (`pxEntry`) is kept with the position and on disk, so a restart does not change which rule
+  protects it.
+
+### The shipped plan is the owner's own settings code
+
+`PCS1~eyJ2IjoxLCJwIjoiYmFsYW5jZWQi…` is now what a fresh install runs, and what the **Balanced** card applies:
+
+| Setting | Value | |
+| --- | --- | --- |
+| `minBuyers` | 70 | a crowd has to be in it |
+| `minNetFlowSol` | 2 | real net buying, not noise |
+| `minMcSol` / `maxMcSol` | 80 / 1500 | the band, applied literally in the simple plan |
+| `minLiqUsd` | 4000 | a pool that can absorb an exit |
+| `takeProfitPct` / `stopLossPct` | 80 / 45 | room to run, and a stop that does not fire on noise |
+| `maxHoldSec` | 500 | eight minutes, not three |
+| `maxPositions` / `maxBuysPerMin` | 6 / 10 | |
+| `buyAmountSol` | 0.1 | the size the plan is built for (a card never moves it) |
+| `sessionLossLimitSol` | 1 | ten tickets |
+| `maxLossStreak` / `pauseMinutes` | 3 / 10 | |
+| `maxDevBuySol` / `maxDevHoldPct` / `maxTraderSharePct` | 12 / 30 / 40 | the rug-shaped coins are refused |
+| `maxRoundTripPct` | 8 | a ticket whose fees exceed this is refused, with the size that would work |
+| `simpleMode` | on | the target, the stop, the time limit and the give-back floor decide |
+
+`maxChange5mPct` and `minChange5mPct` are off in this plan (0), and the trailing stop's numbers (14/8) are carried but
+inert while the simple mode is on - the simple ladder has no trail by definition. That is stated rather than hidden.
+
 ## [1.0.1] - 2026-11-05
 
 - Verified Pump program log ownership and ignored reverted or duplicate notifications.
