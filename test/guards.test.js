@@ -78,6 +78,26 @@ const tokenOp = (tag) => new TransactionInstruction({
   assert.throws(() => assertSwapTx(build([SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: ATTACKER, lamports: 500_000_000 })]), owner, { maxSolOut: 0.02 }), /too much SOL/);
   assertSwapTx(build([SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: ATTACKER, lamports: 20_000_000 })]), owner, { maxSolOut: 0.02 });
 
+  // The trade the desk signs from the PRIMARY route gets the same two rules. The README has promised since the first
+  // release that a third-party transaction cannot ask for a token approval or send the rent of a closed account
+  // somewhere else; only the backup route enforced it, so a hostile answer from the main API was signed as it came.
+  {
+    const { Store } = require('../src/store');
+    const { Engine, DEFAULTS } = require('../src/engine');
+    const gdir = fs.mkdtempSync(path.join(os.tmpdir(), 'guardtx-'));
+    const gwallet = { exists: () => true, isUnlocked: () => true, address: () => owner, keypair: kp };
+    const ge = new Engine(gwallet, new Store(gdir, 's.json', DEFAULTS));
+    clearInterval(ge._bal); clearInterval(ge._ui);
+    ge.refreshBalance = () => {};
+    ge._guardTx(build([tokenOp(3)]), 0.02);                       // a plain token transfer is what a swap does
+    assert.throws(() => ge._guardTx(build([tokenOp(4)]), 0.02), /token approval/, 'an approval is refused on the trade route too');
+    assert.throws(() => ge._guardTx(build([tokenOp(6)]), 0.02), /token authority/, 'an authority change is refused');
+    assert.throws(() => ge._guardTx(build([closeOwnAccount(ATTACKER)]), 0.02), /rent going elsewhere/, 'a close that pays a stranger is refused');
+    ge._guardTx(build([closeOwnAccount()]), 0.02);                // the route's own wSOL account closes back to us
+    assert.throws(() => ge._guardTx(build([SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: ATTACKER, lamports: 900_000_000 })]), 0.02), /suspicious/, 'the SOL ceiling still applies');
+    fs.rmSync(gdir, { recursive: true, force: true });
+  }
+
   // The guard reads the whole message, so an unresolved program id is refused instead of skipped.
   const legacy = new Transaction().add(SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: ATTACKER, lamports: 1_000 }));
   legacy.recentBlockhash = Keypair.generate().publicKey.toBase58();

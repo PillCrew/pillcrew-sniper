@@ -53,6 +53,13 @@ const CURVE_JUMP_UP = 3;
 // bonding curve could be read for it.
 const ENTRY_PX_MAX_AGE_MS = 30000;
 const PUMP_PROGRAM = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
+// The token programs and the three instruction tags a trade never needs (see `_guardTx`).
+const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+const TOKEN_IX_APPROVE = 4;
+const TOKEN_IX_SET_AUTHORITY = 6;
+const TOKEN_IX_CLOSE_ACCOUNT = 9;
+const TOKEN_IX_APPROVE_CHECKED = 13;
 const FEE_FLOOR_SOL = 0.00005;
 const FEE_CU_ESTIMATE = 150000;
 const MIN_SLIP = 3;
@@ -2324,6 +2331,21 @@ class Engine extends EventEmitter {
     const ticket = typeof amountSol === 'number' && amountSol > 0 ? amountSol : 0;
     const allowed = BigInt(Math.round((TX_GUARD_MAX_SOL + ticket * 1.1) * 1e9));
     if (total > allowed) throw new Error('Safety check blocked a suspicious transaction.');
+    // The same two rules the backup route gets, and for the same reason: a swap never needs to hand a token
+    // authority to anybody, and it never needs to close one of our accounts with the rent going somewhere else. The
+    // README has promised this for every trade transaction since the first release; only the backup route enforced
+    // it, so a hostile answer from the primary API could have asked for an approval and been signed.
+    const owner = this.wallet.address();
+    for (const ix of instructions) {
+      if (ix.program !== TOKEN_PROGRAM && ix.program !== TOKEN_2022_PROGRAM) continue;
+      if (!ix.data.length) throw new Error('Safety check blocked a transaction with an unreadable token instruction.');
+      const tag = ix.data[0];
+      if (tag === TOKEN_IX_APPROVE || tag === TOKEN_IX_APPROVE_CHECKED) throw new Error('Safety check blocked a transaction that asks for a token approval.');
+      if (tag === TOKEN_IX_SET_AUTHORITY) throw new Error('Safety check blocked a transaction that changes a token authority.');
+      if (tag === TOKEN_IX_CLOSE_ACCOUNT && owner && ix.keys[1] !== owner) {
+        throw new Error('Safety check blocked a transaction that closes an account with the rent going elsewhere.');
+      }
+    }
   }
 
   /**
@@ -2809,6 +2831,9 @@ class Engine extends EventEmitter {
       positions: [...this.positions.values()].map((p) => ({
         mint: p.mint, symbol: p.symbol, solIn: p.solIn, status: p.status, paper: p.paper, pending: Boolean(p.pending),
         pnlPct: this._pnlPct(p), heldSec: Math.round((now - p.openedAt) / 1000), mc: p.mc,
+        // The same age the fast channel carries: the two paths draw the same card, so they must carry the same facts
+        // or the "no price" label would flicker with every full repaint.
+        pxAgeSec: p.pxAt ? Math.round((now - p.pxAt) / 1000) : null,
       })),
       rpc: this.rpc.status(), feeSol: this._feeFor(false),
       feedInfo: {
