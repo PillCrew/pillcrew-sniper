@@ -2215,10 +2215,12 @@ class Engine extends EventEmitter {
       // worth now, and every rule - the stop included - would be reading a ghost. Measured live on 2026-11-05: a coin
       // that went from a 50k market cap to nothing kept printing +71% for eight minutes, and only a hand on the Sell
       // button ended it. The price feed gets PX_DEAD_MS to answer (the poll asks for that mint directly after that),
-      // and after PX_LOST_MS the position is closed: any price beats no price. A position with no reading at all is
-      // counted from the moment it entered the book, because holding it blind is the same problem either way.
+      // and after PX_LOST_MS the position is closed: any price beats no price. A position restored from disk gets
+      // three times as long, because a session that has just started has not had its first answer yet and selling it
+      // blind would be the desk panicking rather than protecting.
       const lastPx = p.pxAt || p.bookedAt || p.openedAt || now;
-      if (now - lastPx > PX_LOST_MS) {
+      const blindFor = p.pxAt ? PX_LOST_MS : PX_LOST_MS * 3;
+      if (now - lastPx > blindFor) {
         p.trigger = null;
         this._sell(p, 'Price lost', 100);
         continue;

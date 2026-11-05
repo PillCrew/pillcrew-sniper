@@ -770,6 +770,11 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     await settle();
     assert.strictEqual(sold, false, 'a position restored a moment ago waits for its first price');
     assert.ok(e.positions.has('OLD'));
+    // ...and it is not kept for ever either: a restored coin nobody can price is closed once the longer grace is up.
+    e.positions.get('OLD').bookedAt = Date.now() - 200000;
+    e._tick();
+    await settle();
+    assert.strictEqual(sold, true, 'a restored coin that never gets a price is still sold, just later');
   }
 
   fs.rmSync(dir, { recursive: true, force: true });
