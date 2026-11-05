@@ -3,11 +3,6 @@ const JUP = 'https://api.jup.ag/tokens/v2';
 const JUP_PRICE = 'https://lite-api.jup.ag/price/v3';
 const GECKO = 'https://api.geckoterminal.com/api/v2/networks/solana';
 const WSOL = 'So11111111111111111111111111111111111111112';
-// MEASURED 2026-11-05: the Jupiter API answered `429 Too Many Requests` to our own user agent string
-// (`PillCrewSniper/1.0`) while the very same request with a browser-shaped one answered `200 OK`, one after the other.
-// Their edge treats an unknown client name as abuse, and every launch door on that host was being refused because of
-// one header. The app still names itself, and still says what it is - it just does it the way every desktop client
-// does, behind the compatibility token that HTTP has used for thirty years.
 const UA = {
   accept: 'application/json',
   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) PillCrewSniper/1.0',
@@ -16,9 +11,6 @@ const BATCH = 30;
 // A public data host tolerates about five requests a second, and it is asked by three pollers at once, so the
 // traffic is paced: a call for an open position always passes, everything else waits its turn.
 const CALLS_PER_SEC = 4;
-// The Jupiter price service is the fastest door an exit has, and it is also the one with the smallest free allowance -
-// measured on 2026-11-05, thirty-one refusals in a minute while a single position was held, i.e. the desk itself was
-// the flood. One call a second is still eight times faster than any stop needs to be, and it keeps the door open.
 const PRICE_MIN_GAP_MS = 1000;
 // The words a memecoin symbol is made of. The DexScreener search board answers about thirty pairs per query, so it
 // is walked one word at a time instead of asking the same thing every cycle.
@@ -104,11 +96,6 @@ class Market {
     return Date.now() >= (this._cool[host] || 0);
   }
 
-  /**
-   * DexScreener answers about 300 requests a minute per IP and starts refusing in bursts well below that, so every
-   * call to it takes a slot from this bucket. The handful a second that is kept free by `urgent` belongs to the open
-   * positions: a delayed exit costs money, a delayed discovery door costs one coin out of hundreds.
-   */
   _slot(host, max = CALLS_PER_SEC) {
     const now = Date.now();
     const slots = (this._slots[host] || []).filter((t) => now - t < 1000);
@@ -121,16 +108,6 @@ class Market {
   async _call(url, urgent = false) {
     const host = this._host(url);
     if (!this.ready(host)) { this.stats.skipped++; return null; }
-    // The bucket applies to every DexScreener call, not only the housekeeping ones: its limit is per IP and three
-    // pollers share it, and a 429 costs more than the request it refused. The calls an exit depends on never come
-    // from this host (the curve and the Jupiter price service answer those), so nothing urgent is held back. An
-    // `urgent` call is one of the few that may exceed the bucket: the open positions.
-    // RULE ADDED 2026-11-05 (measured on the owner's own Jupiter key, 2026-11-05): the free tier refills about ONE
-    // request a second - twenty quick calls answered five and refused fifteen, one call every 700 ms broke on the
-    // fourth, one every 1.1 s did not - and a key on the public tier does not change that. So Jupiter gets its own
-    // bucket: TWO calls in a second (a single cycle asks the token index and then a wide door, and five answered in a
-    // burst is what the host tolerates), then one a second. Without any bucket the token index - a thousand coins, all
-    // of them nice to have - spends the allowance the price service needs for a coin that is being held.
     const cap = host === 'jupiter' || host === 'jup-price' ? 2 : CALLS_PER_SEC;
     if ((host === 'dexscreener' || host === 'jupiter' || host === 'jup-price') && !urgent && !this._slot(host, cap)) return null;
     this.stats.calls++;
@@ -144,12 +121,6 @@ class Market {
       // 2026-11-05 it was Jupiter and GeckoTerminal for hours while DexScreener was answering normally.
       if (!e.host) e.host = host;
       if (e.kind === 'rate') {
-        // Back off harder each time it happens without a good answer in between, so a rate limited endpoint is never
-        // hammered. The first rest is short on purpose: a host that is cooling also holds back the prices of the open
-        // positions, and an exit that cannot see a price for half a minute is worse than one refused request. The
-        // ceiling is a minute, because a source that refused six times running is not having a burst - on 2026-11-05
-        // Jupiter and GeckoTerminal were on a hard block for hours, and retrying them every eight seconds was nothing
-        // but noise in the log and traffic on somebody else's door.
         const step = Math.min(7, (this._steps[host] || 0) + 1);
         this._steps[host] = step;
         this._cool[host] = Date.now() + Math.min(60000, 700 * 2 ** step);
@@ -170,17 +141,8 @@ class Market {
     }
   }
 
-  /**
-   * New launches are polled on every cycle because that list only spans about a minute, so a slower loop would miss
-   * premiers. One wide door rotates alongside it: boosts, profiles, trending, volume, the whole Pump.fun dex, and -
-   * when `wide` is on - the DexScreener search board and GeckoTerminal's newest pools, which is where coins that no
-   * trending list carries still turn up with real buys and sells.
-   */
   async discover(wide = true) {
     const out = [];
-    // The token index is the best launch door there is, and it is the first one to be refused: measured on 2026-11-05
-    // the whole Jupiter API (and GeckoTerminal beside it) answered 429 for hours while DexScreener kept working. A
-    // refused host is skipped, not asked again on every cycle - that is what turns one refusal into an endless warn.
     if (this.ready('jupiter')) {
       const fresh = await this._call(`${JUP}/recent?limit=50`);
       for (const t of Array.isArray(fresh) ? fresh : []) {
@@ -190,9 +152,6 @@ class Market {
     } else this.stats.skipped++;
 
     const doors = wide ? 9 : 7;
-    // A door whose host is currently refusing is replaced by a working one. Five of the nine doors live on Jupiter or
-    // GeckoTerminal; with both refused and the rotation unchanged, most cycles discovered nothing at all while the log
-    // said only "rate limited" - measured live: no new coin entered the desk for an hour.
     const DOOR_HOST = ['dexscreener', 'dexscreener', 'dexscreener', 'jupiter', 'jupiter', 'gecko', 'gecko', 'dexscreener', 'gecko'];
     let door = this._source++ % doors;
     if (!this.ready(DOOR_HOST[door])) {
@@ -241,9 +200,6 @@ class Market {
       out.push(...this._fromGecko(body, 'trending'));
     }
     if (door === 7) {
-      // The DexScreener search board: every Solana pair it indexes for one query, with the price, liquidity and the
-      // counts a coin is scored on. Keyless and wide. One search answers about thirty pairs, so the query rotates -
-      // a single word carries a handful of coins, and the words below are the ones memecoin symbols are made of.
       const q = SEARCH_WORDS[(this._searchWord = ((this._searchWord || 0) + 1) % SEARCH_WORDS.length)];
       const body = await this._call(`${DS}/latest/dex/search?q=${q}`);
       out.push(...this._fromPairs(body?.pairs, 'search'));
@@ -316,11 +272,6 @@ class Market {
     return Boolean(t && t.id) && (t.launchpad === 'pump.fun' || String(t.id).endsWith('pump'));
   }
 
-  /**
-   * A token as Jupiter describes it. Two units have to be read carefully: `stats5m.priceChange` is already a
-   * percentage (checked against DexScreener on the same coins), so it needs no scaling, and Jupiter publishes no
-   * pool depth, so `liqUsd` stays zero and the depth guard is skipped until DexScreener prices the coin.
-   */
   _hintOf(t) {
     const s5 = t.stats5m || {};
     const audit = t.audit || {};
@@ -341,11 +292,6 @@ class Market {
     };
   }
 
-  /**
-   * Direct prices for the coins being held, straight from Jupiter's price service: one keyless request covers every
-   * mint and answers in about 150 ms, which is what an exit needs. The market board stays the source of the wide
-   * numbers (depth, buyers); the tick that closes a position comes from here.
-   */
   async prices(mints) {
     const ids = [...new Set(mints.filter((m) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(m)))];
     if (!ids.length) return new Map();
@@ -390,11 +336,6 @@ class Market {
     return rows;
   }
 
-  /**
-   * Holder count for one mint, from GeckoTerminal's token page. Only the extra entry filters ask for it, and the
-   * engine remembers the answer, so a buy attempt costs one request at most. The API writes the number with
-   * thousands separators, so it is cleaned before it is read.
-   */
   async holders(mint) {
     if (!this.ready('gecko') || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) return null;
     const body = await this._call(`${GECKO}/tokens/${mint}/info`);

@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { ChainFeed, decodeEvent, marketCapSol, b58 } = require('../src/chain');
+const { ChainFeed, decodeEvent, marketCapSol, b58, PUMP_PROGRAM } = require('../src/chain');
 
 const A = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const dec = (s) => { let n = 0n; for (const c of s) n = n * 58n + BigInt(A.indexOf(c)); const out = []; while (n > 0n) { out.unshift(Number(n & 255n)); n >>= 8n; } let z = 0; for (const c of s) { if (c === '1') z++; else break; } return Buffer.from([...Array(z).fill(0), ...out]); };
@@ -38,8 +38,17 @@ assert.strictEqual(decodeEvent('%%%'), null);
 // websocket notification handling (no network)
 const f = new ChainFeed(); const got = []; f.on('event', (x) => got.push(x));
 const note = (logs, err = null) => JSON.stringify({ jsonrpc: '2.0', method: 'logsNotification', params: { result: { context: { slot: 1 }, value: { signature: 's', err, logs } } } });
-f._onMessage(note(['Program 6EF8 invoke [1]', 'Program data: ' + create.toString('base64'), 'Program data: ' + trade(true, 1e9, 3e10, 1e15).toString('base64')]));
-f._onMessage(note(['Program data: ' + trade(true, 1e9, 3e10, 1e15).toString('base64')], { InstructionError: 1 })); // failed tx ignored
+const launch = 'Program data: ' + create.toString('base64');
+const fill = 'Program data: ' + trade(true, 1e9, 3e10, 1e15).toString('base64');
+const invoke = 'Program ' + PUMP_PROGRAM + ' invoke [1]';
+const done = 'Program ' + PUMP_PROGRAM + ' success';
+f._onMessage(note([invoke, fill, done], { InstructionError: 1 }));
+f._onMessage(note([invoke, fill]));
+f._onMessage(note(['Program Outer invoke [1]', 'Program ' + PUMP_PROGRAM + ' invoke [2]', fill, done, 'Program Outer failed: reverted']));
+assert.equal(got.length, 0);
+const valid = note([invoke, launch, 'Program Foreign invoke [2]', fill, 'Program Foreign success', fill, done]);
+f._onMessage(valid);
+f._onMessage(valid);
 assert.deepStrictEqual(got.map((x) => x.txType), ['create', 'buy']);
 f._onMessage(JSON.stringify({ id: 1, result: 77 })); assert.ok(f.connected);
 assert.ok(f.endpoints().length >= 2);

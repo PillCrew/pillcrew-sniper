@@ -237,3 +237,11 @@ details.adv[open] > summary::before { transform: rotate(45deg); }
 .rec-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 11px; background: var(--panel-2); border: 1px solid var(--line); }
 .rec-row small { color: var(--mute); display: block; }
 .rec-row .row-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+@media (max-width: 900px) {
+  .sidebar { width: 190px; padding-inline: 8px; }
+  .content { padding: 20px 18px 32px; }
+  .grid.cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .form-grid, .deep-panel { grid-template-columns: 1fr; }
+  .head-actions, .keyrow { flex-wrap: wrap; }
+  .card-head { flex-wrap: wrap; gap: 8px; }
+}

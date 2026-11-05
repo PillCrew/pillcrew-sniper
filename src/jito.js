@@ -24,6 +24,7 @@ class Jito {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), CALL.timeout);
     let r;
+    let text = '';
     try {
       r = await fetch(this.url, {
         method: 'POST',
@@ -31,6 +32,7 @@ class Jito {
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
         signal: ctl.signal,
       });
+      text = typeof r.text === 'function' ? await r.text() : JSON.stringify(await r.json());
     } catch (e) {
       this.stats.errors++;
       throw new Error(e.name === 'AbortError' ? 'Jito did not answer in time.' : 'Jito is unreachable: ' + e.message);
@@ -40,8 +42,6 @@ class Jito {
     if (r.status === 429) { this.stats.errors++; throw new Error('Jito rate limit reached.'); }
     // Read the answer once, as text: the refusal body is the only thing that explains a 400, and a response object that
     // only speaks JSON (a test double, an older fetch) still has to be understood here.
-    let text = '';
-    try { text = typeof r.text === 'function' ? await r.text() : JSON.stringify(await r.json()); } catch (_) { text = ''; }
     let body = null;
     try { body = text ? JSON.parse(text) : null; } catch (_) { body = null; }
     if (!r.ok) {

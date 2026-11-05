@@ -60,23 +60,29 @@ class Jupiter {
     const { VersionedTransaction } = require('@solana/web3.js');
     const q = new URLSearchParams({ inputMint, outputMint, amount: String(amountRaw), taker: keypair.publicKey.toBase58() });
     if (slippageBps) q.set('slippageBps', String(Math.round(slippageBps)));
-    const order = await this._fetch(`/order?${q}`, { headers: this._headers() }, 8000);
+    const order = await this._fetch(`/order?${q}`, { headers: this._headers() }, 8000)
+      .catch((err) => { err.phase = 'build'; err.definite = true; throw err; });
     if (!order || !order.transaction) {
-      throw new Error('Jupiter has no route: ' + ((order && (order.errorMessage || order.errorCode)) || 'unknown'));
+      throw Object.assign(new Error('Jupiter has no route: ' + ((order && (order.errorMessage || order.errorCode)) || 'unknown')), { phase: 'build', definite: true });
     }
     if (order.inAmount != null && String(order.inAmount) !== String(amountRaw)) {
-      throw new Error('Jupiter quoted a different amount than the order and it was refused.');
+      throw Object.assign(new Error('Jupiter quoted a different amount than the order and it was refused.'), { phase: 'build', definite: true });
     }
     const tx = VersionedTransaction.deserialize(Buffer.from(order.transaction, 'base64'));
     if (typeof guard === 'function') guard(tx, keypair.publicKey.toBase58());
     tx.sign([keypair]);
+    const signature = require('bs58').encode(tx.signatures[0]);
     const res = await this._fetch('/execute', {
       method: 'POST',
       headers: this._headers({ 'content-type': 'application/json' }),
       body: JSON.stringify({ signedTransaction: Buffer.from(tx.serialize()).toString('base64'), requestId: order.requestId }),
-    }, 30000);
+    }, 30000).catch((err) => {
+      err.phase = 'submitted'; err.definite = false; err.signature = signature;
+      throw err;
+    });
     if (!res || res.status !== 'Success') {
-      throw new Error('Jupiter swap failed: ' + ((res && (res.error || res.code)) || 'no answer'));
+      throw Object.assign(new Error('Jupiter swap outcome unknown: ' + ((res && (res.error || res.code)) || 'no answer')),
+        { phase: 'submitted', definite: false, signature });
     }
     // A route may take a small platform fee out of the input, so the filled amount is compared with a tolerance:
     // 0.1% off is the fee, 5% off is a partial fill the book must not treat as a full exit.
@@ -85,10 +91,11 @@ class Jupiter {
       const filled = BigInt(res.inputAmountResult);
       const shortfallPct = filled >= asked ? 0 : Number(((asked - filled) * 10000n) / asked) / 100;
       if (shortfallPct > 2) {
-        throw Object.assign(new Error(`Jupiter filled ${filled} of ${asked} (${shortfallPct.toFixed(2)}% short).`), { partialFill: true });
+        // A successful partial fill is still an executed order. The engine reconciles the token balance.
+        return res.signature || signature;
       }
     }
-    return res.signature;
+    return res.signature || signature;
   }
 }
 

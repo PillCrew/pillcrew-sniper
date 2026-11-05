@@ -106,7 +106,7 @@ const { Engine, DEFAULTS } = require('../src/engine');
   // five minute band and 78 score), and a 30 SOL coin with six buyers is deliberately not it. This test is about the
   // wiring - a launch arrives, is judged, is bought - so it supplies its own permissive plan.
   store.set({
-    minScore: 0, minBuyers: 3, minNetFlowSol: 0.5, minMcSol: 10, maxMcSol: 200, minLiqUsd: 0,
+    minTokenAgeSec: 0, paperLatencyMs: 0, minScore: 0, minBuyers: 3, minNetFlowSol: 0.5, minMcSol: 10, maxMcSol: 200, minLiqUsd: 0,
     minChange5mPct: 0, maxChange5mPct: 0, simpleMode: false, deepEntry: false, minHolders: 0,
     takeProfitPct: 90, stopLossPct: 9, maxHoldSec: 600, buyAmountSol: 0.02,
   });
@@ -136,7 +136,7 @@ const { Engine, DEFAULTS } = require('../src/engine');
 
   // creator bought a huge bag at launch -> skipped
   const bag = 'Bag1111111111111111111111111111111111111111';
-  e.ingest({ txType: 'create', mint: bag, name: 'Bag', symbol: 'BAG', traderPublicKey: 'devwallet', marketCapSol: 30, fromChain: true });
+  e.ingest({ txType: 'create', mint: bag, name: 'Bag', symbol: 'BAG', creator: 'devwallet', traderPublicKey: 'devwallet', marketCapSol: 30, fromChain: true });
   e.ingest({ txType: 'buy', mint: bag, traderPublicKey: 'devwallet', solAmount: 6, marketCapSol: 45, fromChain: true });
   for (let i = 0; i < 6; i++) e.ingest({ txType: 'buy', mint: bag, traderPublicKey: 'u' + i, solAmount: 0.7, marketCapSol: 46 + i, fromChain: true });
   e._evalOne(e.tokens.get(bag), Date.now());

@@ -165,9 +165,11 @@ class RPCManager {
       if (!this._available(this.current)) this._rotate('cooling');
       const url = this.current;
       const h = this.health.get(url);
+      const began = Date.now();
       try {
         const out = await this._withTimeout(Promise.resolve(fn(this._conn(url), url)), left > 0 ? Math.min(perTry, left) : perTry);
         h.ok++; h.fails = 0; h.until = 0;
+        h.latencyMs = Date.now() - began;
         return out;
       } catch (err) {
         const c = classify(err);
@@ -191,9 +193,18 @@ class RPCManager {
   async broadcast(raw, opts = {}) {
     const n = Math.max(1, Math.min(Number(opts.doors) || 3, this.endpoints.length));
     const urls = [];
-    for (let i = 0; i < this.endpoints.length && urls.length < n; i++) urls.push(this.endpoints[(this.index + i) % this.endpoints.length]);
+    const ordered = this.endpoints.map((_, i) => this.endpoints[(this.index + i) % this.endpoints.length]);
+    for (const url of ordered.filter((u) => this._available(u)).concat(ordered)) {
+      if (!urls.includes(url)) urls.push(url);
+      if (urls.length === n) break;
+    }
     const sendOpts = opts.send || { skipPreflight: true, maxRetries: 0 };
-    const one = (url) => this._withTimeout(Promise.resolve(this._conn(url).sendRawTransaction(raw, sendOpts)), Number(opts.timeoutMs) || 2500);
+    const one = async (url) => {
+      const began = Date.now();
+      const signature = await this._withTimeout(Promise.resolve().then(() => this._conn(url).sendRawTransaction(raw, sendOpts)), Number(opts.timeoutMs) || 2500);
+      this.health.get(url).latencyMs = Date.now() - began;
+      return signature;
+    };
     try {
       return await Promise.any(urls.map(one));
     } catch (e) {
@@ -214,7 +225,7 @@ class RPCManager {
       current: this.current,
       nodes: this.endpoints.map((u) => {
         const h = this.health.get(u);
-        return { url: u, host: host(u), active: u === this.current, coolingDown: h.until > now, ok: h.ok, fails: h.fails, lastError: h.lastError };
+        return { url: u, host: host(u), active: u === this.current, coolingDown: h.until > now, ok: h.ok, fails: h.fails, lastError: h.lastError, latencyMs: h.latencyMs ?? null };
       }),
     };
   }

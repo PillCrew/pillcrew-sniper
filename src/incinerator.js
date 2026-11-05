@@ -18,13 +18,13 @@ class Incinerator {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 20000);
     let r;
+    let data = null;
     try {
       r = await fetch(BASE + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': key }, body: JSON.stringify(body), signal: ctl.signal });
+      try { data = await r.json(); } catch (err) { if (ctl.signal.aborted) throw err; }
     } catch (e) {
       throw new Error(e.name === 'AbortError' ? 'Sol Incinerator did not answer in time.' : 'Could not reach Sol Incinerator: ' + e.message);
     } finally { clearTimeout(timer); }
-    let data = null;
-    try { data = await r.json(); } catch (_) { /* non-JSON error page */ }
     if (!r.ok) {
       const code = r.status;
       if (code === 401) throw new Error('Sol Incinerator rejected the API key (401). Check the key in Settings.');

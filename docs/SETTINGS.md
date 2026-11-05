@@ -1,5 +1,19 @@
 # Settings reference
 
+## Pro defaults
+
+New profiles and **Best Profit** use advanced scoring, one position, three entries per minute, an 8% round-trip fee limit, a 20% target and a 12% stop. A trailing stop arms at +14%. In Practice, the button starts broad discovery and opens Live Feed. In Live mode it applies settings only. The scanner ranks qualifying candidates in each scan batch by score and then net inflow. Streaming events can also trigger immediate evaluation. Applying the preset preserves the ticket, mode and any lower session loss limit. Historical presets and observations below describe earlier versions.
+
+## Changes in 1.0.1
+
+Practice settings now include `paperLatencyMs` (0–10000), `paperBaseSlippagePct` (0–50), `paperUnknownImpactPct` (0–90), `paperFailurePct` (0–100), and `paperSeed`. They appear in advanced settings and do not change live orders. The seed applies after restart.
+
+The High capital preset uses the existing `aggressive` identifier, with two positions and four entries per minute. It enables advanced checks, requires five seconds of token age and caps estimated round-trip cost at 8%. It does not change the ticket or mode. No preset has a verified profitability result.
+
+Live entries now require a known creator, a fresh wallet-level trade stream and a successful on-chain mint risk check. These gates also apply to simple mode. See [release audit](AUDIT-1.0.1.md) and [replay documentation](BACKTESTING.md) for accounting limits.
+
+The remaining reference below includes historical provider observations; quotas and availability can change.
+
 Every setting lives in `settings.json` in the app data folder and is editable in the app. Values are
 validated on save, so a typo cannot turn into a ruinous number.
 
@@ -285,8 +299,7 @@ it was.
 | `maxBuyers` | 0 | The buyer ceiling. A coin with more recent buyers than this is skipped, because past it the crowd is already in and a small ticket is buying their exit. `0` turns it off |
 | `minLiqUsd` | 1500 | Skip a coin whose pool is smaller than this in USD. `0` turns it off |
 
-`auto` picks the best door available: PumpDev when a key is set, the on chain feed when a private RPC
-is set, PumpPortal otherwise. All three work. The trade stream only changes how fast prices move.
+Automatic uses PumpDev when a key is configured. Otherwise it subscribes to Solana program logs over the configured RPC or a public WebSocket. If the chain stream fails, PumpPortal provides launch discovery. Live entries still require fresh wallet-level trade evidence.
 
 ## Integrations
 

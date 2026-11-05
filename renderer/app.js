@@ -121,7 +121,7 @@
       : 'since start';
     if (s.rpc) {
       const cur = s.rpc.nodes.find((n) => n.active);
-      $('#rpcText').textContent = 'RPC: ' + (cur ? cur.host : 'auto');
+      $('#rpcText').textContent = 'RPC: ' + (cur ? cur.host : 'auto') + (cur && cur.latencyMs != null ? ` · ${cur.latencyMs} ms` : '');
       $('#rpcInfo .dot').className = 'dot ' + (cur && cur.coolingDown ? 'warn' : 'ok');
     }
     const btn = $('#startBtn');
@@ -135,9 +135,6 @@
     if (pauseNote) {
       if (s.paused) {
         pauseNote.hidden = false;
-        // The sentence used to be the whole note, so the only way out of a pause was to wait it out - and the owner
-        // asked for a button beside the message. The text lives in its own span now, and the button is untouched by
-        // every repaint, so it cannot be swallowed mid-click.
         const text = document.getElementById('pauseText');
         const until = new Date(s.paused.until).toLocaleTimeString();
         if (text) text.textContent = `New entries paused until ${until} (${s.paused.reason}). Open positions still close normally.`;
@@ -151,9 +148,6 @@
     // Real money: the honest figure is the wallet, not the sum of trades. It carries every fee and every rejected
     // order, which is exactly what the owner noticed was missing.
     const liveMode = s.mode === 'live';
-    // RULE ADDED 2026-11-05: the number and its label must be the same fact. With the bot stopped there is no session
-    // to measure, so the card falls back to the book's own profit - and calling that "since Start" was a lie on the
-    // very first screen after a restart (-0.053 SOL of closed trades, read as this session's result).
     const hasDelta = liveMode && s.walletDeltaSol != null;
     const shown = hasDelta ? s.walletDeltaSol : s.stats.pnl;
     const pnl = $('#sPnl'); pnl.textContent = signed(shown); pnl.className = shown > 0 ? 'pos' : shown < 0 ? 'neg' : '';
@@ -161,9 +155,6 @@
     if (sub) {
       const fees = Number(s.stats.feeSpentSol || 0);
       const fails = Number(s.stats.orderFails || 0);
-      // Where the entry price really came from. A desk that is buying at board prices instead of the pool's is buying
-      // blind, and this is the only place that says so: `curve` is the number the order fills at, `board` is a row that
-      // may be a minute old.
       const epx = s.stats.entryPx || {};
       const pxNote = Number(epx.curve || 0) + Number(epx.board || 0) + Number(epx.refused || 0) > 0
         ? ` · entries priced at the pool ${Number(epx.curve || 0)}, at the board ${Number(epx.board || 0)}, refused ${Number(epx.refused || 0)}`
@@ -189,7 +180,7 @@
     const rows = s.positions || [];
     if (changed('pos-set', rows.map((p) => p.mint).join(','))) renderPositions(s);
     else paintPositions(rows);
-    if (changed('hist', s.history.slice(0, 8).map((x) => x.ts))) renderHistory(s);
+    if (changed('hist', s.history.slice(0, 8).map((x) => [x.ts, x.pnlSol, x.measured]))) renderHistory(s);
     if (changed('log', [s.logs.length, s.logs.length ? s.logs[s.logs.length - 1].ts : 0])) renderLog(s.logs);
     renderFeed(s);
     const wb = $('#walBal'); if (wb) wb.textContent = sol(s.walletBalance || 0, 4);
@@ -216,15 +207,6 @@
         call(api.botSell(p.mint)).then(() => toast(`Sold ${p.symbol}.`)).catch((e) => toast(e.message, true));
       } }, 'Sell'));
   }
-  /**
-   * Open positions, updated in place.
-   *
-   * RULE CHANGED 2026-11-05 (the owner: "całe UI z Open positions skacze"): this used to clear the panel and build every
-   * row again whenever the set of mints changed - and the set changes on every refused entry, because the buy path holds
-   * a slot while it asks the pool for a price (500 refusals in one paper session). One coin arriving or leaving threw
-   * every row away, so the eye saw the whole list jump. Rows now stay put: a coin that left is removed, a coin that
-   * arrived is appended, everything else is left alone.
-   */
   function renderPositions(s) {
     const box = $('#positions');
     const list = s.positions || [];
@@ -244,11 +226,6 @@
     }
   }
 
-  /**
-   * The fast lane for the open positions: the engine pushes them whenever a price moved, so the percentage on screen
-   * follows the market instead of waiting for the next full window update. Only the number and its colour are
-   * touched - rebuilding the panel twenty times a second would throw away the Sell buttons under the cursor.
-   */
   function paintPositions(list) {
     const box = $('#positions');
     if (!box || !Array.isArray(list) || !list.length) return;
@@ -292,8 +269,10 @@
         // early, and a row without it is a row that hides the most useful fact about the trade.
         const peak = t.peakPct == null ? '' : ` · peaked ${pctText(t.peakPct)}`;
         const held = t.heldSec == null ? '' : ` · held ${fmtAge(t.heldSec)}`;
+        const timing = t.sellObservationMs == null ? '' : ` · sale status observed after ${t.sellObservationMs} ms`;
+        const basis = t.paper ? ' · simulated' : t.measured ? ' · exit measured' : ' · estimated';
         return h('div', { class: 'row' },
-          h('div', {}, h('b', {}, '$' + (t.symbol || '?')), h('small', {}, `${t.reason || 'Sold'} · ${fmtTime(t.ts)}${peak}${held}`)),
+          h('div', {}, h('b', {}, '$' + (t.symbol || '?')), h('small', {}, `${t.reason || 'Sold'} · ${fmtTime(t.ts)}${peak}${held}${basis}${timing}`)),
           h('div', { class: cls }, h('b', { class: cls }, signed(pnl, 4) + ' SOL'), h('small', { class: pctClass(pct) }, pctText(pct))));
       });
     } catch (e) {
@@ -360,7 +339,12 @@
     const trades = s.history.slice().reverse();
     $('#curveNote').textContent = trades.length ? `${trades.length} closed trade${trades.length > 1 ? 's' : ''}` : '';
     if (trades.length < 2) { box.append(h('div', { class: 'empty-note' }, 'Your profit curve appears after the first trades.')); return; }
-    const pts = [0]; let acc = 0; for (const t of trades) { acc += t.pnlSol; pts.push(acc); }
+    const pts = [0]; let acc = 0, peak = 0, drawdown = 0, gains = 0, losses = 0;
+    for (const t of trades) {
+      acc += t.pnlSol; pts.push(acc); peak = Math.max(peak, acc); drawdown = Math.max(drawdown, peak - acc);
+      if (t.pnlSol > 0) gains += t.pnlSol; else losses -= t.pnlSol;
+    }
+    $('#curveNote').textContent = `${trades.length} recent exits · drawdown ${drawdown.toFixed(4)} SOL · PF ${losses > 0 ? (gains / losses).toFixed(2) : '—'}`;
     const W = 600, H = 190, pad = 14, lo = Math.min(0, ...pts), hi = Math.max(0, ...pts), span = (hi - lo) || 1;
     const x = (i) => pad + (i / (pts.length - 1)) * (W - pad * 2), y = (v) => H - pad - ((v - lo) / span) * (H - pad * 2);
     const line = pts.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
@@ -486,9 +470,6 @@
         h('h2', {}, 'Fees held back'),
         h('p', { class: 'hint' }, `${sol(S.reserveSol, 4)} SOL is never spent on coins: it pays the network fee and tip for every position the bot holds, so it can always sell everything it bought. ${sol(Math.max(0, S.freeSol || 0), 4)} SOL is free to trade with.`)));
     }
-    // A wallet under the rent-exempt floor cannot be debited at all, so no route (PumpPortal, Jupiter, any swap
-    // widget) can sell from it - the fee payer is the wallet. Said where the money is, not only in the log, and
-    // only when coins are actually stuck: an empty new wallet is told on the deposit card instead.
     if (S && S.walletBalance != null && S.walletBalance < 0.0009 && (S.positions || []).length > 0) {
       root.append(h('div', { class: 'card warn-card' },
         h('h2', {}, 'Send SOL before the bot can trade'),
@@ -609,6 +590,8 @@
   }
   const AMOUNTS = [0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1];
   const TOGGLES = [
+    ['recordMarket', 'Record market observations', 'Saves prices and entry signals locally for replay. Recordings contain mint addresses and no private keys. Each file is capped at 50 MB.'],
+    ['adaptiveExits', 'Order-flow exits (experimental)', 'Exit after sustained sell pressure or a fresh same-pool liquidity reading falls by half. Off by default; test in Practice first.'],
     ['marketScan', 'Market scan', 'Watches trending, boosted, newest and brand-new coins across the whole Pump.fun market.'],
     ['wideDiscovery', 'Every coin source', 'Also hunts the DexScreener search board and GeckoTerminal’s newest and trending pools, where most coins that no launch list carries turn up. Turn it off to watch the launch feeds only.'],
     ['smartFees', 'Smart fees', 'Pays the lowest fee and slippage that still lands.'],
@@ -620,6 +603,11 @@
     ['deepEntry', 'Extra entry filters', 'Requires a minimum number of holders before a coin can be bought, and shows the holder bar and the market cap band in the panel below. Off means only the normal rules apply.'],
     ['simpleMode', 'Simple settings', 'Shows only the basic numbers - the market cap band, buyer floor and ceiling, amount, slots, slippage, target, stop and hold time - and turns every advanced rule off. One switch back and the full desk returns.'],
   ];
+  function estimatedFees(settings) {
+    const side = Number(settings.priorityFeeSol) + networkExtras(settings);
+    return roundTripFeePct(settings.buyAmountSol, side, side);
+  }
+
   function renderQuick() {
     if (!settings) return;
     $$('#profiles .profile').forEach((p) => p.classList.toggle('active', p.dataset.profile === settings.profile));
@@ -634,8 +622,8 @@
     const inPlayText = inPlay < 0.1 ? inPlay.toFixed(3) : inPlay.toFixed(2);
     // The tips are fixed and the ticket is not, so at a small size they are most of the round trip. Saying "about 3%"
     // next to a 0.001 SOL ticket was the opposite of the truth: it is over 40%, and no strategy can beat that.
-    const trip = 3 + (2 * Number(settings.priorityFeeSol || 0) / Math.max(settings.buyAmountSol, 0.001)) * 100;
-    $('#amountHint').textContent = `Each coin costs about ${settings.buyAmountSol} SOL, and a round trip costs about ${trip.toFixed(0)}% of it (3% protocol fees plus the network tip both ways${trip > 8 ? ' — raise the ticket and this share falls' : ''}). With up to ${settings.maxPositions} coins at once, the bot can have ${inPlayText} SOL in play, plus about 0.002 SOL of rent per coin that comes back when it sells.`;
+    const trip = estimatedFees(settings);
+    $('#amountHint').textContent = `Each coin costs about ${settings.buyAmountSol} SOL, and a round trip costs about ${trip.toFixed(0)}% of it (standard curve, builder and network fees before price impact). With up to ${settings.maxPositions} coins at once, the bot can have ${inPlayText} SOL in play, plus about 0.002 SOL of rent per coin that comes back when it sells.`;
     const box = clear($('#toggles'));
     // In the simple mode the rest of the desk is off, so the rest of the switches are off the screen with it.
     const shown = settings.simpleMode ? TOGGLES.filter(([k]) => k === 'simpleMode') : TOGGLES;
@@ -736,6 +724,11 @@
 
   // ───────── settings tab ─────────
   const FIELDS = [
+    ['paperLatencyMs', 'Practice fill delay (ms)', 50, 'Stress assumption. Zero disables the delay; try 250–1000 ms when comparing plans.'],
+    ['paperBaseSlippagePct', 'Practice baseline slippage (%)', 0.1, 'Adverse slippage per side, before estimated price impact.'],
+    ['paperUnknownImpactPct', 'Practice impact when depth is unknown (%)', 0.5, 'Extra slippage when the quote-side liquidity cannot be estimated.'],
+    ['paperFailurePct', 'Practice order failure rate (%)', 1, 'Repeat with several rates. A failed order leaves an existing position open.'],
+    ['paperSeed', 'Practice random seed', 1, 'Use the same seed when comparing failure scenarios. Applied after restart.'],
     ['minScore', 'Minimum score to buy (0-100)', 1, 'What the bot has to see before it spends. Higher means fewer, stronger entries.'],
     ['minBuyers', 'Buyers needed in the window', 1, 'Distinct wallets. Coins found by the market scan are read over five minutes instead.'],
     ['minNetFlowSol', 'The coin needs net buying of (SOL)', 0.1, 'Buys minus sells on the coin’s own tape, in the last few seconds. This is about the coin, not your ticket: 1 means other people bought a whole SOL more than they sold.'],
@@ -756,9 +749,6 @@
     ['maxTraderSharePct', 'Skip if one wallet is over (%)', 5, 'Avoids fake volume from a single wallet.'],
     ['maxChange5mPct', 'Skip if already up (%) in 5 min, 0 is off', 5, 'Refuses a coin that has already run: buying it is buying somebody else\'s exit.'],
     ['minChange5mPct', 'Only buy if up at least (%) in 5 min, 0 is off', 1, 'The floor of the same band: a launch that has not moved yet is where a move starts. A coin only 2% up with real demand is early; a coin 60% up is late.'],
-    // RULE ADDED 2026-11-05: the two clocks a sniping desk is judged on, and the fee gate, are settings now instead of
-    // constants in the code - a professional plan has to be reproducible and shareable, and these three decide as much
-    // as the band does.
     ['minTokenAgeSec', 'Do not buy a coin younger than (seconds, 0 is off)', 1, 'A launch this young has no tape to judge - the buyers are the dev and his friends. Zero buys the first print.'],
     ['maxTokenAgeSec', 'Do not buy a coin older than (seconds, 0 is off)', 5, 'The whole-life version of the five minute ceiling: past this the move has happened and a small ticket is buying somebody else\'s exit.'],
     ['maxRoundTripPct', 'Refuse a ticket whose round trip costs more than (%)', 1, 'Fees both ways as a share of your ticket. Below this the tips eat the trade - at 0.001 SOL they are 40% of it. 5 is the floor, 20 is the shipped plan.'],
@@ -798,6 +788,7 @@
   ];
   function renderSettings() {
     if (!settings) return;
+    $('#autopilotBtn span').textContent = settings.mode === 'paper' ? 'Best Profit · Start Practice scan' : 'Best Profit · Apply live settings';
     $$('#profiles .profile').forEach((p) => p.classList.toggle('active', p.dataset.profile === settings.profile));
     const form = clear($('#settingsForm'));
     // Simple mode: only the basic numbers are shown, and the advanced ones stop deciding. The hidden values stay in
@@ -818,10 +809,7 @@
         ['pumpdev', 'PumpDev (trades + launches)'],
         ['chain', 'Blockchain only (needs good RPC)'],
         ['pumpportal', 'PumpPortal (launches only)'],
-      ].map(([v, l]) => h('option', { value: v, selected: settings.feedSource === v }, l))), h('span', {}, 'Automatic picks PumpDev when a key is set, the blockchain when a private RPC is set, PumpPortal otherwise.')));
-    // The extra entry filters panel: one switch in the quick setup opens it, and everything in it saves like any
-    // other number. The rows stay inside the form even while hidden, so a hidden panel never loses its values.
-    // It is not part of the simple mode: the simple mode has no advanced filters.
+      ].map(([v, l]) => h('option', { value: v, selected: settings.feedSource === v }, l))), h('span', {}, 'Automatic uses PumpDev with a configured key, otherwise Solana program logs. PumpPortal provides launch discovery if the chain feed fails.')));
     if (!settings.simpleMode) {
       const deep = h('div', { id: 'deepPanel', class: 'deep-panel', hidden: !settings.deepEntry },
         h('div', { class: 'deep-head' }, h('b', {}, 'Extra entry filters'), h('small', {}, 'holders and the market cap band')));
@@ -833,10 +821,7 @@
     $('#rpcUrl').value = settings.rpcUrl || '';
     $('#rpcBackupUrl').value = settings.rpcBackupUrl || '';
     $('#rpcWsUrl').value = settings.rpcWsUrl || '';
-    const rt = 3 + (2 * settings.priorityFeeSol / Math.max(settings.buyAmountSol, 0.001)) * 100;
-    // Which rule closes a position, in the order the engine checks them. The percentages are what is on screen, so a
-    // sale at a number that is not the target explains itself. The simple mode reads only its own plan: saying "a
-    // trail follows the peak" while the trail is switched off would be the desk lying to its owner.
+    const rt = estimatedFees(settings);
     const plan = settings.simpleMode
       ? [`everything at +${settings.takeProfitPct}%`, `a stop at -${settings.stopLossPct}%`, 'half of any run past +20% is kept', `and nothing is held longer than ${settings.maxHoldSec} s`].join(', ')
       : [
@@ -847,7 +832,7 @@
       settings.breakEvenPct > 0 ? `no position that reached +${settings.breakEvenPct}% may close at a loss` : '',
       `and nothing is held longer than ${settings.maxHoldSec} s`,
     ].filter(Boolean).join(', ');
-    $('#costNote').textContent = `Worst-case cost per round trip: ~${rt.toFixed(1)}% (3% protocol fees + network tip). Exits: ${plan}.`;
+    $('#costNote').textContent = `Estimated round-trip fees: ~${rt.toFixed(1)}% before price impact. Exits: ${plan}.`;
     renderQuick();
     renderRpcList();
     // The share code is a view of these numbers, so it is rewritten whenever they are.
@@ -941,15 +926,12 @@
     try {
       const btn = $('#autopilotBtn');
       btn.disabled = true;
-      const before = settings && settings.buyAmountSol;
-      settings = await call(api.autopilot());
+      const startPractice = settings.mode === 'paper';
+      settings = await call(api.autopilot(startPractice));
       renderSettings();
-      const lowered = before != null && Number(settings.buyAmountSol) < Number(before);
-      const cap = Number(settings.sessionLossLimitSol);
-      $('#autopilotMsg').textContent = `${lowered
-        ? `Applied. The ticket is ${settings.buyAmountSol} SOL now, so one bad coin cannot end the session.`
-        : 'Applied.'} The session stops itself at ${cap} SOL, which is eight tickets at this size. Everything below is editable.`;
-      toast('Best settings for profit applied.');
+      $('#autopilotMsg').textContent = startPractice ? 'Practice scanner started.' : 'Preset applied. Use Start Bot to begin live trading.';
+      if (startPractice) showTab('feed');
+      toast($('#autopilotMsg').textContent);
     } catch (e) {
       toast(e.message, true);
     } finally {

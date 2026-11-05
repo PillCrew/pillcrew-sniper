@@ -5,8 +5,9 @@ const { Store } = require('./src/store');
 const { WalletManager } = require('./src/wallet');
 const { Engine, DEFAULTS, PROFILES, AUTOPILOT } = require('./src/engine');
 const Share = require('./src/share');
+const { trustedSender } = require('./src/ipcguard');
 
-const ALLOWED_HOSTS = new Set(['pump.fun', 'solscan.io', 'pumpportal.fun', 'pumpdev.io', 'www.pumpdev.io', 'www.helius.dev', 'helius.dev', 'phantom.app', 'solflare.com', 'pillcrew.fun', 'www.pillcrew.fun', 'developers.jup.ag', 'api.dashboard.sol-incinerator.com', 'sol-incinerator.com']);
+const ALLOWED_HOSTS = new Set(['pump.fun', 'solscan.io', 'pumpportal.fun', 'pumpdev.io', 'www.pumpdev.io', 'www.helius.dev', 'helius.dev', 'phantom.app', 'solflare.com', 'pillcrew.fun', 'www.pillcrew.fun', 'developers.jup.ag', 'portal.jup.ag', 'twitter.com', 'x.com', 'api.dashboard.sol-incinerator.com', 'sol-incinerator.com']);
 
 let win;
 let wallet;
@@ -15,7 +16,7 @@ let engine;
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1320, height: 860, minWidth: 1040, minHeight: 700,
+    width: 1320, height: 860, minWidth: 820, minHeight: 620,
     backgroundColor: '#0a0516', title: 'PillCrew Sniper', autoHideMenuBar: true,
     icon: path.join(__dirname, 'renderer', 'assets', 'logo.png'),
     webPreferences: {
@@ -24,7 +25,9 @@ function createWindow() {
     },
   });
   win.setMenuBarVisibility(false);
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html')).catch((err) => {
+    dialog.showErrorBox('PillCrew Sniper could not open', 'The interface failed to load. Check the application logs before continuing.\n\n' + err.message);
+  });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
 
@@ -46,16 +49,13 @@ function createWindow() {
   });
 }
 
-const wrap = (fn) => async (_e, ...args) => {
-  try { return { ok: true, data: await fn(...args) }; } catch (err) { return { ok: false, error: err.message || String(err) }; }
+const wrap = (fn) => async (event, ...args) => {
+  try {
+    if (!trustedSender(event, win, path.join(__dirname, 'renderer', 'index.html'))) throw new Error('Untrusted IPC sender');
+    return { ok: true, data: await fn(...args) };
+  } catch (err) { return { ok: false, error: err.message || String(err) }; }
 };
 
-/**
- * The desk's own diary, one file a day under `logs/`. Every entry the window shows is also written here, so a session
- * can be read afterwards - including the one question a window cannot answer once it is closed: "what did it do with
- * that coin". A write that fails (a full disk, a file locked by a reader) is dropped in silence: the diary is a
- * convenience, never a reason to stop trading.
- */
 function openDiary(dir) {
   const folder = path.join(dir, 'logs');
   try { fs.mkdirSync(folder, { recursive: true }); } catch (_) { return () => {}; }
@@ -107,7 +107,7 @@ app.whenReady().then(() => {
   store = new Store(dir, 'settings.json', DEFAULTS);
   // Settings that no longer exist: the Jupiter route and the price service need no key, and the old market switch
   // was replaced by `wideDiscovery`.
-  store.unset(['useJupiter', 'jupiterKey']);
+  store.unset(['useJupiter']);
   wallet = new WalletManager(dir);
   engine = new Engine(wallet, store);
 
@@ -178,17 +178,12 @@ app.whenReady().then(() => {
   }));
 
   ipcMain.handle('settings:get', wrap(async () => store.get()));
-  /**
-   * One gate for every way a setting can arrive: typed by hand, applied from a style, or pasted from somebody else's
-   * settings code. A shared code used to be written straight to the store with no checks at all, which meant a stranger
-   * could hand out a plan with a 5 SOL priority fee on every transaction - the numbers that cost money were only
-   * clamped on the path a person types into. The ticket is still never raised by anybody else (see `settings:applyShared`).
-   */
   function cleanSettings(patch) {
     const allowed = Object.keys(DEFAULTS);
     const clean = {};
     const LIMITS = {
       buyAmountSol: [0.001, 5], maxPositions: [1, 50], slippagePct: [1, 90], priorityFeeSol: [0.000001, 0.05],
+      paperLatencyMs: [0, 10000], paperBaseSlippagePct: [0, 50], paperUnknownImpactPct: [0, 90], paperFailurePct: [0, 100], paperSeed: [0, 4294967295],
       jitoTipSol: [0.000001, 0.01], sessionLossLimitSol: [0.001, 5], maxHoldSec: [5, 3600],
       stopLossPct: [0, 95], takeProfitPct: [1, 5000], trailArmPct: [0, 5000], trailGivePct: [0, 5000],
       tp1Pct: [0, 5000], tp1SellPct: [0, 100], triggerHoldMs: [0, 10000], maxBuysPerMin: [1, 600],
@@ -243,20 +238,19 @@ app.whenReady().then(() => {
     return store.set(clean);
   }));
   ipcMain.handle('settings:profile', wrap(async (name) => {
-    if (!PROFILES[name]) throw new Error('Unknown profile');
+    if (!Object.prototype.hasOwnProperty.call(PROFILES, name)) throw new Error('Unknown profile');
     return store.set({ profile: name, ...PROFILES[name] });
   }));
-  ipcMain.handle('settings:autopilot', wrap(async () => {
+  ipcMain.handle('settings:autopilot', wrap(async (startPractice) => {
     if (engine.running) throw new Error('Stop the bot first, then apply the preset.');
-    // The ticket and the mode are the user's own decision, so the preset never raises them. It does lower a ticket
-    // that is bigger than a third of the session cap, because such a ticket turns the cap into a one-trade stop.
-    const ceiling = Math.round((AUTOPILOT.sessionLossLimitSol / 3) * 1000) / 1000;
-    const ticket = Math.min(Number(store.get().buyAmountSol) || ceiling, ceiling);
-    // The session cap follows the ticket instead of being a fixed number: at 0.004 SOL the old 0.35 SOL was eighty
-    // seven trades, which is not a limit, it is a countdown. Eight tickets is a real stop, and the ceiling still caps
-    // a big wallet at the same absolute risk.
-    const cap = Math.max(0.01, Math.min(AUTOPILOT.sessionLossLimitSol, Math.round(ticket * 8 * 1000) / 1000));
-    return store.set({ ...AUTOPILOT, buyAmountSol: ticket, sessionLossLimitSol: cap });
+    if (startPractice === true && store.get().mode !== 'paper') throw new Error('Switch to Practice before starting the scanner.');
+    const cap = Math.min(store.get().sessionLossLimitSol, AUTOPILOT.sessionLossLimitSol);
+    const settings = store.set({ ...AUTOPILOT, marketScan: true, wideDiscovery: true, sessionLossLimitSol: cap });
+    if (startPractice === true) {
+      const result = await engine.start();
+      if (!result.ok) throw new Error(result.error);
+    }
+    return settings;
   }));
   ipcMain.handle('stats:reset', wrap(async (mode) => engine.resetStats(mode)));
 
@@ -286,7 +280,10 @@ app.whenReady().then(() => {
     return store.set(clean);
   }));
 
-  ipcMain.handle('bot:start', async () => engine.start());
+  ipcMain.handle('bot:start', async (event) => {
+    if (!trustedSender(event, win, path.join(__dirname, 'renderer', 'index.html'))) return { ok: false, error: 'Untrusted IPC sender' };
+    try { return await engine.start(); } catch (err) { return { ok: false, error: err.message }; }
+  });
   ipcMain.handle('bot:stop', wrap(async () => engine.stop()));
   ipcMain.handle('bot:sell', wrap(async (mint) => engine.sellPosition(mint)));
   ipcMain.handle('bot:sellAll', wrap(async () => engine.sellAll()));

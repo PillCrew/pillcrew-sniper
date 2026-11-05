@@ -14,8 +14,9 @@ function engine(overrides = {}, storeDir = null) {
   // RULE CHANGED 2026-11-05: the shipped plan is the SIMPLE one (target, stop, time limit, and one give-back floor
   // for a big run). Every case below names the ladder it is testing, so the harness runs the full desk - and the
   // simple-mode behaviour has its own cases here and in `modules.test.js`.
-  store.set({ mode: 'paper', simpleMode: false, takeProfitPct: 40, stopLossPct: 20, maxHoldSec: 600, trailArmPct: 15, trailGivePct: 8, tp1Pct: 0, breakEvenPct: 0, triggerHoldMs: 0, ...overrides });
+  store.set({ paperLatencyMs: 0, paperBaseSlippagePct: 0, paperUnknownImpactPct: 0, mode: 'paper', simpleMode: false, takeProfitPct: 40, stopLossPct: 20, maxHoldSec: 600, trailArmPct: 15, trailGivePct: 8, tp1Pct: 0, breakEvenPct: 0, triggerHoldMs: 0, ...overrides });
   const e = new Engine(wallet, store);
+  e.risk.check = async () => null;
   clearInterval(e._bal);
   clearInterval(e._ui);
   e.refreshBalance = () => {};
@@ -349,7 +350,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
   // A market that has moved to PumpSwap is marked so the backup route finds the new pool by itself.
   {
     const e = engine({ slippagePct: 25 });
-    e.store.set({ mode: 'live', slippagePct: 25 });
+    e.store.set({ mode: 'live', slippagePct: 25, maxPositions: 4, maxBuysPerMin: 10 });
     e.running = true; e.walletBalance = 5;
     const t = { mint: 'SLIP', symbol: 'SLIP', creator: 'c', createdAt: Date.now(), mc: 40, mcHist: [], trades: [], devSold: false, status: 'watching', score: 80, reason: '', lastActivity: Date.now(), launched: true, sources: new Set(['launch']) };
     e.tokens.set('SLIP', t);
@@ -468,7 +469,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     e._finishSell = (pos, why) => { e.positions.delete(pos.mint); e.sold = why; };
     await e._sell(p, 'Stop loss', 100);
     assert.strictEqual(slips.filter((x) => x[0] === 'primary').length, 1, 'the primary door is asked once');
-    assert.strictEqual(slips.filter((x) => x[0] === 'backup').length, 2, 'the backup races the primary and then carries the re-quote');
+    assert.strictEqual(slips.filter((x) => x[0] === 'backup').length, 1, 'the backup is submitted only after a definite primary rejection');
     assert.ok(slips.every((x) => x[1] === 25), `every attempt carries the exit's own tolerance, got ${JSON.stringify(slips)}`);
     assert.strictEqual(e.sold, 'Stop loss', 'and the exit is booked once it fills');
     assert.ok(!e.positions.has('SELLSLIP'));
@@ -576,7 +577,8 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     e._tokenBalanceRaw = async () => 0n;
     e._finishSell = (pos, why) => { e.positions.delete(pos.mint); e.sold = why; };
     await e._sell(p, 'Trailing stop (peaked at +117.0%)', 100);
-    assert.strictEqual(asked.primary + asked.backup, 2, 'both doors are asked at once on a spike');
+    assert.strictEqual(asked.primary, 1, 'one signed order is submitted');
+    assert.strictEqual(asked.backup, 0, 'a confirmed primary sale never starts a second order');
     assert.match(String(e.sold), /Trailing stop/, 'and the exit is booked once it fills');
   }
 
@@ -917,7 +919,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     assert.ok(Math.abs((cashBefore - e.paper.balance) - (0.02 * 1.02 + 0.0002)) < 0.01, 'and the wallet was debited once');
   }
 
-  // RULE ADDED 2026-11-05 (the owner: "całe UI z Open positions skacze, pojawiają się monety których nie kupił"): the buy
+  // The buy path reserves a slot before pricing, but the UI must not show an unpriced candidate.
   // path holds the slot in `positions` while it asks the pool for a price, and drops it again when the price is refused
   // (500 refusals in one paper session). The panel reads the published view, so an unpaid slot must never be in it.
   {
@@ -1196,7 +1198,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     eq._shutdownIfIdle = () => {};
     eq._persistBook = () => {};
     const est = open(eq, 'EST');
-    est.paper = false; est.sig = 'SIGEST'; est.proceeds = null; est.solIn = 0.01; est.feeBuy = 0;
+    est.paper = false; est.sig = 'BUY_SIG'; est.sellSig = 'SIGEST'; est.proceeds = null; est.solIn = 0.01; est.feeBuy = 0;
     eq._finishSell(est, 'Stop loss', 0.0001, 100);
     assert.strictEqual((eq._remeasure || []).length, 1, 'an estimated sale is queued for a second look');
     assert.strictEqual(eq._remeasure[0].sig, 'SIGEST');
@@ -1372,9 +1374,9 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     e._evalOne = () => {};
     await e._buy(t, { score: 90, m: { buyers: 20 }, pass: true });
     assert.ok(!e.positions.has('TOOCHEAP'), 'a ticket that cannot pay its fees is not traded');
-    const line = lines.find((l) => /cannot pay its own fees/.test(l));
+    const line = lines.find((l) => /estimated round-trip fees/.test(l));
     assert.ok(line, 'and the refusal is said in words');
-    assert.ok(/at least 0\.0\d+ SOL/.test(line), 'with the ticket size that would work');
+    assert.match(line, /44.50% of the ticket, above the 8% limit/);
     // The same tip on a normal ticket is fine.
     const e2 = engine({ buyAmountSol: 0.02, priorityFeeSol: 0.0002 });
     e2.walletBalance = 5; e2._freeSol = () => 5;

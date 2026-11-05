@@ -13,6 +13,11 @@ src/incinerator.js   Sol Incinerator client
 src/jupiter.js       Jupiter tokens and swap client
 src/txguard.js       Inspection of transactions built by a third party, before the wallet signs them
 src/store.js         Small JSON settings store
+src/ipcguard.js      Main-window and main-frame IPC sender verification
+src/risk.js          Bounded on-chain mint authority checks
+src/simulation.js    Shared slippage, deterministic random source and analytics
+src/backtest.js      Recorded-signal replay with delayed fills
+src/recorder.js      Bounded opt-in local market/entry-signal recordings
 renderer/            UI: HTML, CSS, vanilla JS views
 test/                Offline test suite
 ```

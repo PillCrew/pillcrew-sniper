@@ -60,6 +60,38 @@ function lamportsOut(instructions) {
   return total;
 }
 
+function assertFeeBudget(instructions, maxFeeSol = 0.01) {
+  if (!Number.isFinite(maxFeeSol) || maxFeeSol < 0) throw new Error('Safety check: invalid fee budget.');
+  let units = 1400000n, price = 0n;
+  const seen = new Set();
+  for (const ix of instructions) {
+    if (ix.program !== COMPUTE_BUDGET) continue;
+    const tag = ix.data[0];
+    if (seen.has(tag)) throw new Error('Safety check: duplicate compute budget instruction.');
+    seen.add(tag);
+    if (tag === 2 && ix.data.length === 5) units = BigInt(ix.data.readUInt32LE(1));
+    else if (tag === 3 && ix.data.length === 9) price = ix.data.readBigUInt64LE(1);
+    else if ((tag === 1 || tag === 4) && ix.data.length === 5) continue;
+    else throw new Error('Safety check: unreadable compute budget instruction.');
+  }
+  const priority = (units * price + 999999n) / 1000000n;
+  if (units > 1400000n || priority + 5000n > BigInt(Math.floor(maxFeeSol * 1e9))) {
+    throw new Error('Safety check: transaction network fee exceeds the fee budget.');
+  }
+}
+
+function assertSystemInstructions(instructions) {
+  for (const ix of instructions) {
+    if (ix.program !== SYS) continue;
+    if (ix.data.length < 4) throw new Error('Safety check: unreadable system instruction.');
+    const tag = ix.data.readUInt32LE(0);
+    if (!((tag === SYSTEM_TRANSFER && ix.data.length === 12)
+      || (tag === SYSTEM_CREATE_ACCOUNT && ix.data.length === 52))) {
+      throw new Error('Safety check: unexpected system instruction.');
+    }
+  }
+}
+
 /**
  * A token instruction that only closes the caller's own empty account, or burns their own tokens, is the whole
  * point of the reclaim feature. Everything that could move a token or hand over authority is not.
@@ -92,6 +124,9 @@ function assertCleanupTx(tx, owner, { burnMint = null, maxFeeSol = 0.01 } = {}) 
   const { payer, signers, instructions } = readTx(tx);
   if (payer !== owner) throw new Error('Safety check: that cleanup transaction would be paid by another wallet.');
   if (signers.length !== 1 || signers[0] !== owner) throw new Error('Safety check: that cleanup transaction asks for another signature.');
+  assertFeeBudget(instructions, maxFeeSol);
+  assertSystemInstructions(instructions);
+  if (lamportsOut(instructions) > BigInt(Math.floor(maxFeeSol * 1e9))) throw new Error('Safety check: that cleanup transaction moves SOL out of the wallet.');
   for (const ix of instructions) {
     if (ix.program === COMPUTE_BUDGET) continue;
     if (ix.program === SYS) {
@@ -114,16 +149,20 @@ function assertCleanupTx(tx, owner, { burnMint = null, maxFeeSol = 0.01 } = {}) 
  * swap never needs to break: our key is the only signer and the payer, no approval, no authority change, no SOL
  * leaving the wallet beyond the ticket.
  */
-function assertSwapTx(tx, owner, { maxSolOut = 0, allowSolOut = 0.02 } = {}) {
+function assertSwapTx(tx, owner, { maxSolOut = 0, allowSolOut = 0.02, maxFeeSol = 0.01 } = {}) {
   const { payer, signers, instructions } = readTx(tx);
   if (payer !== owner) throw new Error('Safety check: that swap would be paid by another wallet.');
   if (signers.length !== 1 || signers[0] !== owner) throw new Error('Safety check: that swap asks for another signature.');
+  assertFeeBudget(instructions, maxFeeSol);
+  assertSystemInstructions(instructions);
   for (const ix of instructions) {
     if (ix.program === TOKEN || ix.program === TOKEN_2022) {
       if (ix.data.length < 1) throw new Error('Safety check: refused a swap with an unreadable token instruction.');
       const tag = ix.data[0];
       if (tag === IX_APPROVE || tag === IX_APPROVE_CHECKED) throw new Error('Safety check: refused a swap that asks for a token approval.');
       if (tag === IX_SET_AUTHORITY) throw new Error('Safety check: refused a swap that changes a token authority.');
+      if (tag === IX_CLOSE_ACCOUNT && ix.keys[1] !== owner) throw new Error('Safety check: refused a swap whose rent goes somewhere else.');
+      if (tag === IX_BURN || tag === IX_BURN_CHECKED) throw new Error('Safety check: refused a swap that burns tokens.');
     }
   }
   const out = lamportsOut(instructions);
@@ -131,4 +170,4 @@ function assertSwapTx(tx, owner, { maxSolOut = 0, allowSolOut = 0.02 } = {}) {
   if (out > allowed) throw new Error('Safety check: refused a swap that moves too much SOL out of the wallet.');
 }
 
-module.exports = { assertCleanupTx, assertSwapTx, readTx, lamportsOut, SYS, TOKEN, TOKEN_2022 };
+module.exports = { assertCleanupTx, assertSwapTx, assertFeeBudget, assertSystemInstructions, readTx, lamportsOut, SYS, TOKEN, TOKEN_2022 };

@@ -3,6 +3,26 @@
 All notable changes to this project are recorded here. The format follows Keep a Changelog and the
 project uses semantic versioning.
 
+## [1.0.1] - 2026-11-05
+
+- Verified Pump program log ownership and ignored reverted or duplicate notifications.
+- Added the Pro preset, aligned Practice exit marks with settlement, and updated fee estimates for PumpPortal Local.
+- Retained confirmed sale signatures while waiting for wallet reconciliation. Replay now supports side-by-side strategy summaries.
+
+- Fixed Practice exit-fee accounting and sale-signature reconciliation.
+- Kept uncertain orders pending and removed competing signed sell orders.
+- Added IPC sender checks, aggregate cleanup limits and compute-fee inspection.
+- Added on-chain mint risk checks and blocked unverified live entry evidence.
+- Added depth-aware Practice slippage, stress controls and recorded-signal replay.
+- Updated Electron and packaging dependencies; see the release audit for remaining advisories.
+- Shortened narrative comments and replaced outdated README claims with current behavior.
+- A blocked live mint check is now **said in words** once, instead of being visible only as a reason on each coin: a gate
+  whose data source is down looks exactly like a quiet market, and the holder bar cost hours that way on 2026-11-05.
+- `npm run test:ui` exists: the Electron UI smoke test was documented in `docs/BUILD.md` and the README but had no
+  script behind it, so nobody could run it. It passes (hidden window, isolated mock wallet, trading stopped).
+
+---
+
 ## [1.0.0] - 2026-11-05
 
 The first public release.
@@ -59,7 +79,7 @@ the plan work and the operator types it.
 
 ### The Open positions panel no longer jumps, and never shows a coin that was not bought
 
-The owner: *"całe UI z Open positions skacze, pojawiają się monety których nie kupił"*. Two faults behind one symptom:
+Open positions flickered and briefly showed tokens that had not been bought. Two faults behind one symptom:
 
 - the buy path holds a slot in `positions` **before** it asks the pool for a price, and drops it again when the price is
   refused (500 refusals in a single paper session), so a coin nobody bought was published to the panel for a fraction of

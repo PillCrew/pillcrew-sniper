@@ -150,19 +150,16 @@
         <header class="page-head"><div><div class="eyebrow">Configuration</div><h1>Settings</h1><p class="sub">Three quick choices and you are done. Everything saves automatically.</p></div></header>
 
         <div class="card presets">
-          <div class="card-head"><h2>One press</h2><span class="muted">sets the numbers that matter</span></div>
-          <p class="hint">The preset is the plan that survived measurement on the live market, written in the same net-of-everything percentages the rules use. It is deliberately a one-slot, patient desk: a small wallet pays most of its costs in fixed tips, so the preset trades less, banks a part early, and lets the rest of a winner run. Your ticket and your mode are never touched.</p>
+          <div class="card-head"><h2>Pro market scanner</h2></div>
+          <p class="hint">Apply the entry, exit and exposure limits below. Your ticket size and trading mode stay under your control.</p>
           <div class="preset-actions">
-            <button class="btn big" id="autopilotBtn"><svg class="ic"><use href="#i-zap"/></svg><span>Apply the best settings for profit</span></button>
+            <button class="btn big" id="autopilotBtn"><svg class="ic"><use href="#i-zap"/></svg><span>Best Profit · Start Practice scan</span></button>
             <span class="msg" id="autopilotMsg"></span>
           </div>
           <ul class="preset-list">
-            <li><b>Fees</b> smart fees on, priority ceiling 0.0002 SOL, slippage ceiling 12%</li>
-            <li><b>Entry</b> score 68+, 8 buyers, +2 SOL net, 25+ holders, band 20 to 150 SOL, pool 2000 USD+, only a coin up 4 to 35% in 5 min, priced at the bonding curve</li>
-            <li><b>Exit</b> 70% sold at +18%, the rest rides to +130% or until the trailing stop gives back 45% of its own peak (arm +12%, floor 8 points), hard stop 9%, hold 240 s</li>
-            <li><b>No break-even order</b> it sells at your own cost of doing business; the trailing stop is what protects a winner</li>
-            <li><b>Patience</b> a take profit must hold 400 ms before it sells, so one spike is not a fill; a stop or a trail acts in 150 ms</li>
-            <li><b>Risk</b> 1 coin at a time, 10 buys a minute, pause 8 min after 5 losses, session cap 8 tickets</li>
+            <li><b>Entry</b> Score threshold 78, at least 30 buyers and 2 SOL net inflow. Estimated round-trip fee limit 8%.</li>
+            <li><b>Exit</b> Target +20%, stop −12%, trailing stop armed at +14%, maximum hold 180 seconds.</li>
+            <li><b>Exposure</b> One open position, up to three buys per minute. Pause after three losses. Session loss threshold up to 0.04 SOL.</li>
           </ul>
         </div>
 
@@ -172,7 +169,7 @@
           <div class="grid three" id="profiles">
             <button class="profile" data-profile="safe"><span class="p-ic"><svg class="ic"><use href="#i-shield"/></svg></span><h3>Safe</h3><p>Fewer trades, only the strongest coins. Lower risk, lower reward.</p></button>
             <button class="profile" data-profile="balanced"><span class="p-ic"><svg class="ic"><use href="#i-gauge"/></svg></span><h3>Balanced <span class="badge">Recommended</span></h3><p>Best mix of safety and speed, with fees kept as low as they can go.</p></button>
-            <button class="profile" data-profile="aggressive"><span class="p-ic"><svg class="ic"><use href="#i-zap"/></svg></span><h3>High roller</h3><p>A big bankroll plan: bigger tickets, a 60% target against a 12% stop, six slots. Fees stop mattering at this size, so a loser is cut fast and a winner is left to run.</p></button>
+            <button class="profile" data-profile="aggressive"><span class="p-ic"><svg class="ic"><use href="#i-zap"/></svg></span><h3>High capital</h3><p>A research preset with fewer positions, a 60% target and a 12% stop. Test fills and drawdown in Practice Mode. Ticket size stays yours; stops cannot guarantee an exit.</p></button>
           </div>
           <div class="qs-label"><span class="qs-n">2</span>How much SOL per coin?</div>
           <div class="chips" id="amountChips"></div>
@@ -270,7 +267,7 @@
             <dt>Private key</dt><dd>The secret that controls your wallet. Never share it.</dd>
           </dl></div>
         </div>
-        <div class="card prose warn"><h2>Be honest with yourself about risk</h2><p>Most meme coins lose value. Fees (about 1.5% per side) and fast price swings mean the bot can lose money even when it works as designed. Past results do not predict the future. Only use money you can afford to lose.</p></div>
+        <div class="card prose warn"><h2>Be honest with yourself about risk</h2><p>Most meme coins lose value. Trading fees, network costs and fast price swings mean the bot can lose money even when it works as designed. Past results do not predict the future. Only use money you can afford to lose.</p></div>
         <button class="btn ghost" id="replayTour">Show welcome tour again</button>
       </section>
 
@@ -295,6 +292,7 @@
 
   <script src="vendor/three.js"></script>
   <script src="scene3d.js"></script>
+  <script src="fees.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

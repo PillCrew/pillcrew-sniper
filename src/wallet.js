@@ -47,7 +47,10 @@ class WalletManager {
     }
   }
 
-  _writable() { if (this.damaged) throw new Error(this.damaged); }
+  _writable() {
+    if (this.damaged) throw new Error(this.damaged);
+    if (this.withdrawing) throw new Error('Wait for the pending withdrawal.');
+  }
 
   exists() { return !!this.meta; }
   address() { return this.meta ? this.meta.address : null; }
@@ -107,9 +110,9 @@ class WalletManager {
    */
   reset() {
     this._writable();
+    fs.rmSync(this.file, { force: true });
     this.keypair = null;
     this.meta = null;
-    try { fs.rmSync(this.file, { force: true }); } catch (_) { /* already gone */ }
     return { removed: true };
   }
 
@@ -120,7 +123,11 @@ class WalletManager {
     let bytes;
     const text = String(secret || '').trim();
     try {
-      bytes = text.startsWith('[') ? Uint8Array.from(JSON.parse(text)) : bs58.decode(text);
+      if (text.startsWith('[')) {
+        const values = JSON.parse(text);
+        if (!Array.isArray(values) || !values.every((v) => Number.isInteger(v) && v >= 0 && v <= 255)) throw new Error('Invalid bytes');
+        bytes = Uint8Array.from(values);
+      } else bytes = bs58.decode(text);
     } catch (_) {
       throw new Error('That does not look like a valid private key.');
     }
@@ -138,7 +145,10 @@ class WalletManager {
     return { address: this.address() };
   }
 
-  lock() { this.keypair = null; }
+  lock() {
+    if (this.withdrawing) throw new Error('Wait for the pending withdrawal.');
+    this.keypair = null;
+  }
 
   verify(password) {
     if (!this.exists()) throw new Error('No wallet found.');
@@ -153,13 +163,21 @@ class WalletManager {
   }
 
   async withdraw(rpcCall, to, amountSol, password) {
+    if (this.withdrawing) throw new Error('A withdrawal is already in progress.');
+    this.withdrawing = true;
+    try { return await this._withdraw(rpcCall, to, amountSol, password); }
+    finally { this.withdrawing = false; }
+  }
+
+  async _withdraw(rpcCall, to, amountSol, password) {
     if (!this.keypair) throw new Error('Unlock your wallet first.');
     this.verify(password);
     let dest;
     try { dest = new PublicKey(String(to).trim()); } catch (_) { throw new Error('Invalid destination address.'); }
     const amount = Number(amountSol);
-    if (!(amount > 0)) throw new Error('Enter an amount greater than 0.');
+    if (!Number.isFinite(amount) || !(amount > 0)) throw new Error('Enter a finite amount greater than 0.');
     const lamports = Math.round(amount * LAMPORTS_PER_SOL);
+    if (!Number.isSafeInteger(lamports) || lamports < 1) throw new Error('Amount must be at least one lamport and within the safe integer range.');
     const balance = await rpcCall((c) => c.getBalance(this.keypair.publicKey));
     if (lamports + 10000 > balance) throw new Error('Not enough SOL (network fee included).');
     const tx = new Transaction().add(SystemProgram.transfer({
@@ -181,7 +199,7 @@ class WalletManager {
       await new Promise((r) => setTimeout(r, 1500));
       const r = await rpcCall((c) => c.getSignatureStatuses([signature]), { timeoutMs: 3000, attempts: 2, budgetMs: 6000 }).catch(() => null);
       const st = r && r.value && r.value[0];
-      if (st) status = st;
+      if (st && (st.err || st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized')) status = st;
     }
     if (status && status.err) throw new Error('The transfer was rejected on chain. Nothing left the wallet.');
     if (!status || (status.confirmationStatus !== 'confirmed' && status.confirmationStatus !== 'finalized')) {

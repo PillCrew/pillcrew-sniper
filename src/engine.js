@@ -8,44 +8,29 @@ const { Jito, MIN_TIP_LAMPORTS } = require('./jito');
 const { readCurves } = require('./curve');
 const { Market } = require('./market');
 const { Incinerator } = require('./incinerator');
-const { assertCleanupTx, assertSwapTx, readTx, lamportsOut } = require('./txguard');
+const { assertCleanupTx, assertSwapTx, assertFeeBudget, assertSystemInstructions, readTx, lamportsOut } = require('./txguard');
 const reclaim = require('./reclaim');
+const { networkExtras, roundTripFeePct } = require('../renderer/fees');
+const { PROTOCOL_FEE: FEE, slippageFraction, seededRandom } = require('./simulation');
+const { RiskAnalyzer, adaptiveExit } = require('./risk');
+const { SessionRecorder } = require('./recorder');
 
 const PUMPPORTAL_WS = 'wss://pumpportal.fun/api/data';
 const PUMPDEV_WS = 'wss://pumpdev.io/ws';
 const TRADE_URL = 'https://pumpportal.fun/api/trade-local';
-const FEE = 0.015;
-const PAPER_SLIP = 0.01;
 const HARD_MAX_SOL_PER_TRADE = 5;
 const MARKET_EVERY_MS = 3000;
 const HOT_EVERY_MS = 1000;
 // Open positions are repriced on their own short cadence: one small request that covers every coin held, and the
 // difference between a stop that reacts at the price it saw and one that fills a second later.
 const POS_EVERY_MS = 150;
-// The board lane for a held coin with no trade stream: twice as fast as the depth sweep, because a graduated coin's
-// PumpSwap pair is the only door that prices it. Six requests a second for one position is far inside what the board
-// allows, and it is the difference between a percentage that follows the market and one that arrives late.
 const POS_BOARD_EVERY_MS = 500;
 const HOT_BATCH = 30;
 const TICK_MS = 50;
-// A price that moves further than this between two readings is treated as a possible bad quote on a thin pool and
-// has to be seen twice before it closes a position. Anything smaller, or anything the trade stream corroborates,
-// is acted on immediately.
 const MAX_TICK_JUMP_PCT = 40;
-// A quote older than this is not a price: it is the last thing known about the coin. A held position is priced from
-// the curve while the stream talks, from the price service while it answers, and from the board when neither does -
-// and a reading that none of the three refreshed inside this window is left alone rather than acted on.
 const PX_STALE_MS = 6000;
-// A position nobody has a price for is a position no rule can protect. After this long the desk asks for that one
-// mint directly instead of waiting for the next sweep to mention it, and after `PX_LOST_MS` it sells: a coin the
-// desk cannot see is a coin it cannot hold. Measured live, a coin that went from a 50k market cap to nothing kept
-// printing +71% for eight minutes, because the last number it had was never replaced.
 const PX_DEAD_MS = 10000;
 const PX_LOST_MS = 45000;
-// How often the bonding curve itself is read for coins whose stream is quiet and whose price service answer is gone.
-// One `getMultipleAccountsInfo` for every coin held, so the cost is a single request, not one per position. A held
-// coin is the one place where a tenth of a second of price is worth a request: a risk rule can only fire on a reading
-// it has seen, so this interval is the floor under how fast a stop can answer.
 const CURVE_EVERY_MS = 120;
 // How far the pool may sit below the board price before an entry is refused: past this the row we judged is behind a
 // fall that is happening right now, and buying it is buying a coin on its way down (see `_entryPrice`).
@@ -53,9 +38,6 @@ const BOARD_STALE_FRAC = 0.08;
 // A curve reading that is more than this multiple above the price the position is measured at is not taken on its own:
 // two readings that agree are needed first (see `_pollPositions`). A fall is never held back - a stop has to fire.
 const CURVE_JUMP_UP = 3;
-// A move bigger than this share of the position's value, seen in ONE reading, is not taken on its own: a trade print
-// or a quote can be a different pool, a misparsed field or one wash trade. A real crash prints again within
-// milliseconds, so asking for a second look costs nothing and protects a stop from a ghost (see `_pricePosition`).
 const WILD_MOVE_FRAC = 0.5;
 // The simple plan has no trail of its own, so it keeps one protective rule: a position that has been up this much
 // closes when half of that run is given back. Not a setting - it is the difference between a winner and a wipeout.
@@ -78,19 +60,7 @@ const MIN_SLIP = 3;
 // the promise that the coins leave. Measured live: a refused stop cost 1.2 s of re-quoting while the coin fell.
 const EXIT_SLIP_MIN = 20;
 const EXIT_SLIP_MAX = 40;
-// A runner far above its target used to be given the whole 40% in exchange for one round trip. Measured on a spike,
-// that is how a position at +40% filled at -30%: the tolerance did not make the fill better, it only removed the floor
-// under it. A spike now gets this much, and a fill beyond it is refused - the trailing stop and the break even are the
-// rules for a coin on its way down, not a wide market order.
-// The tolerance an exit in profit is given, instead of the wide 20-40% a losing exit needs in order to fill at all.
-// Measured live, a coin that peaked at +70% was given 40% and filled at -5%: a wide tolerance does not fill better on
-// a coin that is up, it only removes the floor.
 const SPIKE_SLIP = 15;
-// How long a stop loss has to be seen before it sells, however long `triggerHoldMs` is. A profit rule is waiting for a
-// spike to prove itself; a stop is watching money leave. Measured on a falling coin, holding the level for 400 ms first
-// booked a 10% stop at -26% and a 22% stop at -37%, because 400 ms is a fifth of the move. The guards against a bad
-// print are elsewhere and they still hold: the price has to be a fresh reading, a quote that jumps is not believed, and
-// the sale is abandoned when the coin is already back above water by the time the order is ready.
 const STOP_HOLD_MS = 150;
 // How much of a peak the trailing stop gives back, as a share of the peak itself (see `_trailGive`). The floor is the
 // profile's `trailGivePct`.
@@ -103,18 +73,11 @@ const MAX_TRACKED = 400;
 // A pump.fun launch is one billion tokens, so "SOL paid per whole token × one billion" is the market cap every
 // reading in this app is quoted in. That is what turns a fill into an entry price without asking anybody.
 const PUMP_SUPPLY = 1e9;
-// A fill-derived entry is only rejected when it is not a number at all: a board row can be a different pool or a
-// minute old, so a genuine fill can disagree with it by a lot (measured on $sol: board 56 SOL, fill implying over a
-// thousand). A thousand times in either direction is the line between "a different reading" and "a broken number".
 const ENTRY_FILL_MAX_RATIO = 1000;
 const ENRICH_PER_CYCLE = 90;
 const SCAN_PER_TICK = 40;
 const TRADES_KEPT = 240;
 const SUB_BUDGET = 20;
-// When the plan itself says the limit was reached, the desk makes room instead of arguing with it: positions keep
-// their stream, and the candidates that were only being watched are dropped to leave the headroom the account needs.
-// Measured live on 2026-11-05: "your free plan allows 25 live subscriptions per IP and this IP has reached it" while
-// the app was asking for twenty - the rest of the IP's allowance is simply not ours.
 const SUB_BUDGET_LIMITED = 12;
 // A stream that has been quiet this long is not the price any more: the coin graduated, the feed dropped it or
 // the chain feed fell back to launches only. Open positions switch to the market board after this.
@@ -128,66 +91,59 @@ const TOKEN_RENT_SOL = 0.00204;
 // The rent-exempt floor plus a fee and a tip per open position: never spent on an entry, so anything bought can
 // always pay for its own way out (measured: the wallet hit 0.00066 SOL and no exit could be submitted).
 const MIN_WALLET_RESERVE_SOL = 0.002;
-// A wallet may not drop under the rent-exempt minimum, and a transaction that would do it is refused by the runtime
-// with InsufficientFundsForRent - the fee included. The reserve is that floor plus a fee and a tip for every open
-// position, so a wallet with little SOL can always pay its own way out of everything it holds.
 const RENT_EXEMPT_SOL = 0.00089;
 // A wallet under this cannot pay for an exit at all: the rent-exempt floor is 0.00089 SOL and the runtime refuses
 // any transaction that would leave the fee payer below it.
 const EXIT_FEE_FLOOR_SOL = 0.0012;
 
-/**
- * A profile is a whole plan: what the coin must look like, and how the position is closed.
- *
- * Every percentage here is measured NET of everything a round trip costs - the protocol both ways plus the tips - so
- * the number the window shows is the number the rules use. That matters most on a small ticket, where the tips are a
- * fixed amount: at 0.004 SOL a 10% stop is reached only when the price has fallen about 23%, because the first 13%
- * of any move goes on paying for the round trip.
- * That is why no profile carries a break-even rule any more. At a net zero the trade has paid its costs and earned
- * nothing, the fill lands under the reading that triggered it, and it pre-empts the trailing stop, which sells at
- * arm - give, above water by construction. A rule that sells the winners early and books a small loss is worse than
- * no rule at all.
- *
- * The shape is what decides whether a desk makes money, and it is asymmetric on purpose: many small losses, a few
- * large wins. Measured in paper on the live market with a fixed 4-point trail and a 28% target, every profit rule
- * closed between +6% and +12% while the losses filled at -21% to -33% - a shape that no entry rule can rescue. So a
- * winner is now banked in part early (`tp1Pct`) and the rest is a RUNNER, trailed by a share of its own peak
- * (`_trailGive`), with room that grows as the move grows. The stop stays tight and fast, because it is the only rule
- * that touches losers.
- */
 const PROFILES = {
   safe: {
     minScore: 70, minBuyers: 6, minNetFlowSol: 2, minMcSol: 20, maxMcSol: 80,
     takeProfitPct: 60, stopLossPct: 6, maxHoldSec: 150, slippagePct: 8, priorityFeeSol: 0.0002,
     tp1Pct: 18, tp1SellPct: 50, trailArmPct: 14, trailGivePct: 8, breakEvenPct: 0,
   },
-  // RULE CHANGED 2026-11-05: `balanced` IS the measured profit plan now. The numbers below were set by measurement on
-  // the live market, not by taste: the target and the stop are the SAME size (so a 50% hit rate is break-even rather
-  // than a slow bleed), the band is where a +20% move is still possible, and the entry bars are high enough that a coin
-  // arrives with a crowd already buying it. The old 90/9 pair needed a 90% run to win and paid 9% to lose, which is the
-  // shape that produced a page of small losses and no wins.
   balanced: {
     minScore: 78, minBuyers: 30, minNetFlowSol: 2, minMcSol: 60, maxMcSol: 500,
     takeProfitPct: 20, stopLossPct: 20, maxHoldSec: 180, slippagePct: 15, priorityFeeSol: 0.0002,
     tp1Pct: 0, tp1SellPct: 0, trailArmPct: 0, trailGivePct: 0, breakEvenPct: 0,
   },
-  // RULE CHANGED 2026-11-05: `aggressive` is the plan for a SERIOUS bankroll, and it is built the other way round from
-  // `balanced`. At a big ticket the round trip costs about 3% instead of 5.4%, so a loss can be cut CHEAPLY and a winner
-  // can be left to run: a 12% stop costs one eighth of a ticket, and a 60% target pays for five of them. Measured in
-  // paper on the live market, the shape that loses money is the opposite one - a wide stop (35%) because the rug that
-  // gaps to zero takes the whole ticket whether the stop sits at 12 or at 35, and a small target because it caps the one
-  // trade that pays for the day.
   aggressive: {
     minScore: 78, minBuyers: 30, minNetFlowSol: 2, minMcSol: 60, maxMcSol: 500,
     takeProfitPct: 60, stopLossPct: 12, maxHoldSec: 240, slippagePct: 15, priorityFeeSol: 0.0005,
     tp1Pct: 0, tp1SellPct: 0, trailArmPct: 0, trailGivePct: 0, breakEvenPct: 0,
     // The ticket is NOT part of a style: a press of a card must never raise the money at risk (see `settings:profile`).
     // The card says what size makes this plan work, and the operator types it.
-    simpleMode: true, maxPositions: 6, maxBuysPerMin: 20,
+    simpleMode: false, maxPositions: 2, maxBuysPerMin: 4, minTokenAgeSec: 5, maxRoundTripPct: 8,
   },
 };
+const AUTOPILOT = {
+  ...PROFILES.balanced,
+  profile: 'balanced',
+  simpleMode: false,
+  maxPositions: 1,
+  maxBuysPerMin: 3,
+  sessionLossLimitSol: 0.04,
+  maxLossStreak: 3,
+  pauseMinutes: 10,
+  minTokenAgeSec: 5,
+  maxRoundTripPct: 8,
+  slippagePct: 8,
+  trailArmPct: 14,
+  trailGivePct: 8,
+  stopLossPct: 12,
+  smartFees: true,
+  paperLatencyMs: 300,
+};
+
 const DEFAULTS = {
   mode: 'paper',
+  recordMarket: false,
+  adaptiveExits: false,
+  paperLatencyMs: 0,
+  paperBaseSlippagePct: 1,
+  paperUnknownImpactPct: 2,
+  paperFailurePct: 0,
+  paperSeed: 1,
   profile: 'balanced',
   buyAmountSol: 0.02,
   maxPositions: 3,
@@ -202,10 +158,6 @@ const DEFAULTS = {
   wideDiscovery: true,
   pumpdevKey: '',
   incineratorKey: '',
-  // Your own Jupiter API key (portal.jup.ag). The free door answered about one request a second before it started
-  // refusing this machine's IP, so every price lane was fighting for the same allowance; a key raises the allowance and
-  // is sent on every Jupiter call the desk makes (quotes, the price service, the token lists). Nothing else changes -
-  // the key is a credential, it is never printed back, never shared in a settings code and never logged.
   jupiterKey: '',
   autoReclaim: true,
   // Leftovers that neither door can sell are worth less than the rent their account holds: burning them and closing
@@ -227,105 +179,25 @@ const DEFAULTS = {
   // and "Already up N% in 5m" was the gate that never fired on the coins that then dumped).
   maxChange5mPct: 30,
   minChange5mPct: 2,
-  // Extra entry filters: minimum holders and the market cap band shown in the same panel. Off until the user turns
-  // the switch on; while on, a coin with fewer holders than the bar is never bought, and neither is a coin whose
-  // holder count cannot be read - a filter that silently passes when its data source is down is not a filter.
   deepEntry: false,
   minHolders: 0,
-  // Simple settings: when on, only the basic numbers apply - the market cap band, the buyer floor and ceiling, and
-  // a price that is not falling. Every advanced rule (score, net flow, depth, dev bags, five minute band, holder
-  // bar, first rung, trailing stop, break even) is deliberately off, because that is the whole point of choosing it.
   simpleMode: true,
   maxBuyers: 0,
   minLiqUsd: 4000,
-  // A trade whose fees are a fifth of the ticket is not a trade (measured: two tips at 0.001 SOL are 40% of it). The
-  // gate is a setting so a desk that pays its fees in a different shape can raise it, and it cannot be switched off by
-  // accident - the floor is 5%.
   maxRoundTripPct: 20,
   // How old a coin may be to be bought at all. A launch younger than `minTokenAgeSec` has no tape to judge, and one
   // older than `maxTokenAgeSec` has already had its move. Zero means off in both directions.
   minTokenAgeSec: 0,
   maxTokenAgeSec: 0,
-  // A price rule has to hold this long, on fresh readings, before it may sell: the safeguard against a spike that is
-  // gone before the order lands. Measured live, a coin showed +135% for a moment and the sale filled at -3%. A level
-  // that has been CLEARLY cleared (a target five points past, a floor five under) skips this wait - see `_riskHoldMs`.
   triggerHoldMs: 300,
   openPositions: [],
   maxLossStreak: 5,
   pauseMinutes: 8,
   rpcUrl: '',
-  // A second private node, tried after the first one and before the public pool. A paid desk usually has two: one for
-  // latency and one for redundancy, and a node that starts refusing is otherwise a desk that falls back to a public
-  // endpoint in the middle of a trade.
   rpcBackupUrl: '',
-  // The trade stream's own socket. A provider's WebSocket is often on a different host than its HTTP endpoint
-  // (FluxRPC: `wss://ws.eu.fluxrpc.com` against `https://eu.fluxrpc.com`), and a URL guessed from the HTTP one simply
-  // never connects. Empty means "derive it from the RPC URL", which is what most providers allow.
   rpcWsUrl: '',
   onboarded: false,
-  ...PROFILES.balanced,
-};
-
-/**
- * The one press preset. It is the plan that survived measurement, written in the same net-of-everything percentages the
- * rules use. Three things decide whether a small desk makes money, and all three are in here:
- *
- *  - the ENTRY: a coin already up 30% in five minutes is somebody else's exit, and a coin that has not moved at all has
- *    nothing to join, so the band is 2-30% and the market cap has to sit in 60-500 SOL - the range where a +20% move is
- *    still possible. The bars are the high ones that proved out in measurement (score 78, thirty buyers, 2 SOL of net
- *    buying), and the entry is priced at the bonding curve, not at a board row that may be a minute old;
- *  - the SALE: the target and the stop are the SAME size (20% net), so a coin that reaches the target pays for one that
- *    does not, and a 50% hit rate is break-even rather than a slow bleed. The old shape - a 130% target against a 9%
- *    stop - needed a run to win and paid to lose;
- *  - the RUNNER: in the simple plan there is no trail and no first rung. ONE protective rule stays, because it is the
- *    difference between a win and a wipeout: once a coin has been up SIMPLE_RUN_ARM, half of that peak is kept.
- */
-const AUTOPILOT = {
-  profile: 'balanced',
-  minScore: 78,
-  minBuyers: 30,
-  minNetFlowSol: 2,
-  minMcSol: 60,
-  maxMcSol: 500,
-  takeProfitPct: 20,
-  stopLossPct: 20,
-  maxHoldSec: 180,
-  slippagePct: 15,
-  priorityFeeSol: 0.0002,
-  trailArmPct: 0,
-  trailGivePct: 0,
-  tp1Pct: 0,
-  tp1SellPct: 0,
-  breakEvenPct: 0,
-  // The simple plan: the target, the stop, the time limit and the give-back floor, and nothing else deciding. The
-  // advanced rules (the first rung, the trail, the break even, the holder bar) are off by definition, exactly as the
-  // settings panel says when the switch is on.
-  simpleMode: true,
-  deepEntry: false,
-  minHolders: 0,
-  triggerHoldMs: 400,
-  minLiqUsd: 4000,
-  maxDevHoldPct: 30,
-  maxDevBuySol: 3,
-  maxTraderSharePct: 40,
-  maxChange5mPct: 30,
-  // The floor of the same band: a launch that has not moved yet is where a move starts. Measured in paper, entries at
-  // the top of a five minute push were the ones that stopped out within seconds.
-  minChange5mPct: 2,
-  maxPositions: 3,
-  maxBuysPerMin: 20,
-  sessionLossLimitSol: 0.35,
-  maxLossStreak: 5,
-  pauseMinutes: 8,
-  watchSec: 3,
-  entryWindowSec: 45,
-  marketScan: true,
-  smartFees: true,
-  autoReclaim: true,
-  recoverDust: true,
-  trendMode: true,
-  feedSource: 'auto',
-  wideDiscovery: true,
+  ...AUTOPILOT,
 };
 
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
@@ -337,6 +209,7 @@ class Engine extends EventEmitter {
     this.wallet = wallet;
     this.store = store;
     this.tokens = new Map();
+    this.earlyCreatorSales = new Map();
     this.positions = new Map();
     this.history = [];
     this.logs = [];
@@ -348,15 +221,13 @@ class Engine extends EventEmitter {
     this._subBudget = SUB_BUDGET;
     this.walletBalance = null;
     this.paper = { balance: 5 };
+    this._paperRandom = seededRandom(this.s.paperSeed);
     // Practice money and real money are kept apart, so a bad practice session can never flatter or ruin the
     // real win rate, and each book can be reset on its own.
     this.books = { paper: emptyBook(), live: emptyBook() };
     // The record of what was booked survives a restart, because a panel that forgets the day's profit and loss makes
     // the operator trade blind - and every restart used to do exactly that.
     this._loadBook();
-    // `entryPx` says where the entry price really came from: the pool, the board, or a refusal. It is the number that
-    // decides whether the entry fix is actually in effect - a public node that answers "too many requests" silently
-    // drops every entry back to the board, and then the desk is buying blind again without saying so.
     this.stats = { seen: 0, lastLatencyMs: null, lastSellMs: null, reclaimedSol: 0, launches: 0, feeSpentSol: 0, orderFails: 0, entryPx: { curve: 0, board: 0, refused: 0 } };
     // Said in the log panel, once, when the settings file was damaged or unreadable: the app is then running on
     // defaults, and that is something the person has to know before pressing Start.
@@ -364,9 +235,6 @@ class Engine extends EventEmitter {
     this.launchTimes = [];
     this.buyTimes = [];
     this.cooldowns = new Map();
-    // Coins waiting for their leftover to be sold and their rent freed. Two exits can finish in the same second
-    // (Sell all, two time limits at once) and both must be settled, so a settle that finds another one running joins
-    // this queue instead of being dropped.
     this._settleQueue = new Set();
     // Mints whose curve is not quoted in SOL: no tolerance or route can fill them, so they are remembered for the
     // session instead of being re-ordered (and re-paid for) every time the market board scores them again.
@@ -384,6 +252,7 @@ class Engine extends EventEmitter {
       onSwitch: (from, to, why) => this._log('warn', `RPC switched (${why}): ${new URL(to).hostname}`),
     });
     this._loop = null;
+    this.risk = new RiskAnalyzer((fn, opts) => this.rpcCall(fn, opts));
     this._ui = setInterval(() => this._emitState(), 400);
     // The open positions are pushed on their own, twenty times a second, and only when a price really moved. Waiting
     // for the whole window (five times slower) is what made the panel look frozen while the market was moving.
@@ -405,10 +274,6 @@ class Engine extends EventEmitter {
       const next = lamports / 1e9;
       const prev = this.walletBalance;
       this.walletBalance = next;
-      // A jump up that no sale, reclaim or settle account for is somebody putting SOL in. Counting it as profit told
-      // the owner he was up when he had only deposited, and the reverse for a withdrawal - so the baseline moves with
-      // it and the card keeps measuring trading. Conservative on purpose: a sale lands within two seconds of leaving
-      // (`_lastSettleAt`), the rent of a closed account is ~0.002, and anything under five thousandths is noise.
       if (prev != null && Number.isFinite(prev)) {
         const delta = next - prev;
         const quiet = Date.now() - Math.max(this._lastSettleAt || 0, this._lastReclaimAt || 0) > 10000;
@@ -428,6 +293,38 @@ class Engine extends EventEmitter {
   }
 
   _balance() { return this.s.mode === 'live' ? (this.walletBalance || 0) : this.paper.balance; }
+
+  _paperSlippage(t, amount) {
+    const solUsd = typeof this.market.solPrice === 'function' ? this.market.solPrice() : 0;
+    const depth = solUsd > 0 && t && t.ext && t.ext.liqUsd > 0 ? t.ext.liqUsd / solUsd / 2 : 0;
+    return slippageFraction(amount, depth, this.s.paperBaseSlippagePct, this.s.paperUnknownImpactPct);
+  }
+
+  _recordTick(t, signal = false) {
+    if (!this.s.recordMarket || !this.store.file) {
+      if (this.recorder && !this.recorder.closed) this.recorder.close();
+      return;
+    }
+    if (Date.now() < (this._recordingRetryAt || 0)) return;
+    if (this.recorder && this.recorder.error) {
+      this._recordingRetryAt = Date.now() + 60000;
+      this._log('warn', 'Recording unavailable: ' + this.recorder.error);
+      this.recorder = null;
+      return;
+    }
+    try {
+      if (!this.recorder || this.recorder.closed) this.recorder = new SessionRecorder(require('path').join(require('path').dirname(this.store.file), 'recordings'));
+      const usd = typeof this.market.solPrice === 'function' ? this.market.solPrice() : 0;
+      const depth = usd > 0 && t.ext && Number.isFinite(t.ext.liqUsd) && t.ext.liqUsd > 0 ? t.ext.liqUsd / usd / 2 : undefined;
+      this.recorder.record({ ts: Date.now(), mint: t.mint, mcSol: t.mc, liquiditySol: depth, signal });
+    } catch (err) { this._recordingRetryAt = Date.now() + 60000; this._log('warn', 'Recording unavailable: ' + err.message); }
+  }
+
+  async _paperWait() {
+    const delay = Math.min(10000, Math.max(0, Number(this.s.paperLatencyMs) || 0));
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    if (this._paperRandom() * 100 < this.s.paperFailurePct) throw Object.assign(new Error('Simulated order failure'), { phase: 'build', definite: true });
+  }
 
   /** What the coins on the book are worth right now, plus the rent the wallet paid for their accounts (recoverable,
    *  so it is cash in waiting, not a cost). One place, because the baseline and the live reading must be the same kind
@@ -454,12 +351,6 @@ class Engine extends EventEmitter {
     return this.sessionStart;
   }
 
-  /**
-   * What this session made, in SOL, measured as money and nothing else: the wallet plus the coins on the book at their
-   * current price (and their rent, which is cash in waiting), against the same sum at Start. Coins held at Start are in
-   * BOTH sides - leaving them out of the baseline opened every restart with their whole value as profit - and a deposit
-   * or a withdrawal moves the baseline instead of the result (`refreshBalance`).
-   */
   _walletDelta() {
     if (!this.sessionStart || this.walletBalance == null || this.sessionStart.balance == null) return null;
     return (this.walletBalance + this._holdingsSol()) - (this.sessionStart.balance + (this.sessionStart.holdings || 0));
@@ -473,9 +364,6 @@ class Engine extends EventEmitter {
   }
 
   _noteSpend(sol) {
-    // The entry is returned so the caller can RELEASE it: an order the door refused never leaves the wallet, and
-    // holding its lamports against the balance for a whole minute is what turned a 0.022 SOL wallet into one that
-    // could not buy anything (measured: a skipped buy of a coin quoted in another token held the ticket for a minute).
     const entry = { ms: Date.now(), sol };
     (this._spends || (this._spends = [])).push(entry);
     return entry;
@@ -543,6 +431,7 @@ class Engine extends EventEmitter {
   async start(opts = {}) {
     if (this.running) return { ok: true };
     const s = this.s;
+    if (s.mode === 'live' && this.store.damaged) return { ok: false, error: 'Restore the damaged settings file before starting real-money trading.' };
     // An engine started without a network must not wait for one: the entry price falls back to the coin's own trade
     // stream instead of asking a bonding curve nobody can reach (see `_entryPrice`).
     this.offline = Boolean(opts.offline);
@@ -559,10 +448,6 @@ class Engine extends EventEmitter {
       // SOL sits in open positions and their rent must still be able to manage them, and must still show them.
       await this._restorePositions();
       await this._adoptOnChain();
-    // RULE ADDED 2026-11-05: the coins already held at Start are part of what the wallet was worth at Start. They
-    // were not counted, while their value and their rent were added to the equity on every push - so a restart with
-    // three restored positions opened the session at a fake **+0.035 SOL** profit (three tickets plus their rent, to
-    // the lamport). Measured on the owner's own wallet at 15:09.
     this._markSession();
       // The reserve is what pays the exits, so a wallet that cannot hold it is holding coins it cannot sell. With
       // nothing open the ticket is asked for as well, otherwise the bot would start only to refuse every entry.
@@ -603,6 +488,10 @@ class Engine extends EventEmitter {
         mint: p.mint, symbol: p.symbol, entryMc: p.entryMc, mc: p.mc, peakMc: p.peakMc, solIn: p.solIn,
         feeBuy: p.feeBuy, feeExitEst: p.feeExitEst, openedAt: p.openedAt, tp1Done: Boolean(p.tp1Done), sig: p.sig || null,
         adopted: Boolean(p.adopted), graduated: Boolean(p.graduated),
+        pendingSellSig: p.pendingSell ? p.pendingSell.sig : null, sellSig: p.sellSig || null,
+        pendingBuy: Boolean(p.pendingBuy || p.confirmingBuy), tokIn: p.tokIn == null ? null : String(p.tokIn),
+        pendingSellPct: p.pendingSellPct || 100,
+        entryLiquidityUsd: p.entryLiquidityUsd ?? null, entryDexId: p.entryDexId || null,
       }));
     try { this.store.set({ openPositions: live }); } catch (_) { /* a full disk is not a reason to stop trading */ }
   }
@@ -614,7 +503,7 @@ class Engine extends EventEmitter {
     for (const rec of saved) {
       if (!rec || !rec.mint || this.positions.has(rec.mint)) continue;
       const held = await this._tokenBalanceRaw(rec.mint).catch(() => null);
-      if (held === 0n) { missing++; continue; }
+      if (held === 0n && !rec.pendingBuy && !rec.pendingSellSig) { missing++; continue; }
       const now = Date.now();
       this.positions.set(rec.mint, {
         mint: rec.mint, symbol: rec.symbol || rec.mint.slice(0, 4), name: rec.symbol || '',
@@ -626,12 +515,13 @@ class Engine extends EventEmitter {
         // A restored position keeps the exit tip it was priced with, or gets today's if the record predates the field.
         feeExitEst: Number(rec.feeExitEst) || this._feeFor(true),
         openedAt: Number(rec.openedAt) || now, status: 'open', closing: false, paper: false,
-        // A restored position has no price yet in this session. Its clock starts when it entered the book, not when it
-        // was bought: a coin from three days ago would otherwise be "blind for three days" and sold by the watchdog on
-        // the very first tick, before any feed had a chance to answer.
         bookedAt: now,
         fails: 0, nextTry: 0, pending: held === null, tp1Done: Boolean(rec.tp1Done), sig: rec.sig,
-        tokIn: held, adopted: Boolean(rec.adopted), graduated: Boolean(rec.graduated),
+        tokIn: rec.pendingSellSig && /^\d+$/.test(rec.tokIn) ? BigInt(rec.tokIn) : held, adopted: Boolean(rec.adopted), graduated: Boolean(rec.graduated),
+        pendingSell: rec.pendingSellSig ? { sig: rec.pendingSellSig, raw: null } : null, sellSig: rec.sellSig || null,
+        pendingBuy: Boolean(rec.pendingBuy),
+        pendingSellPct: Number(rec.pendingSellPct) || 100,
+        entryLiquidityUsd: Number(rec.entryLiquidityUsd) || null, entryDexId: rec.entryDexId || null,
       });
       if (!this.tokens.has(rec.mint)) {
         this._adopt({ mint: rec.mint, source: 'restore', launched: true });
@@ -670,9 +560,6 @@ class Engine extends EventEmitter {
     let scan;
     try { scan = await this._tokenAccounts(); } catch (_) { return 0; }
     const holdings = scan.dust.filter((a) => !this.positions.has(a.mint) && a.uiAmount > 0);
-    // The exchange rate is needed to compare a holding's value with a ticket. Asking for it here matters: on a cold
-    // start there is no rate yet, so every holding read as unpriced and was booked at the ticket size - a made-up
-    // entry price, a made-up loss the moment it sold, and an instant "take profit" at a number nobody ever paid.
     if (holdings.length && !(this.market.solPrice() > 0)) await this.market.enrich([WSOL]).catch(() => {});
     // The holding's value decides whether it is a position or a leftover: booking dust at the ticket size invented
     // money in the books and re-sold the same coin over and over.
@@ -687,9 +574,6 @@ class Engine extends EventEmitter {
       const solValue = usd != null && solUsd > 0 ? usd / solUsd : null;
       const floor = Math.max(0.0005, this.s.buyAmountSol * 0.2);
       if (solValue != null && solValue < floor) { skipped++; continue; }
-      // Neither a market price nor an exchange rate: this is a leftover whose value nobody can measure, so it is not
-      // booked as a position (a book entry that was never bought invents profit and loss alike). It is sold - or
-      // burned when the market will not take it - and its account closed, which is what the settle path is for.
       if (solValue == null) {
         unknown++;
         if (this.s.autoReclaim) this._settleMint(a.mint);
@@ -732,7 +616,9 @@ class Engine extends EventEmitter {
 
   _shutdownIfIdle() {
     if (this.running || this.positions.size) return;
+    if (this.recorder && !this.recorder.closed) this.recorder.close();
     this.wantWs = false;
+    clearTimeout(this._portalRetry);
     this._portalOnly = false;
     this._subbed = new Set();
     if (this.chain) { this.chain.stop(); this.chain.removeAllListeners(); this.chain = null; }
@@ -740,6 +626,8 @@ class Engine extends EventEmitter {
     this.connected = false;
     if (this._loop) { clearInterval(this._loop); this._loop = null; }
     if (this._marketTimer) { clearInterval(this._marketTimer); this._marketTimer = null; }
+    clearTimeout(this._hotStart);
+    clearTimeout(this._marketStart);
     if (this._hotTimer) { clearInterval(this._hotTimer); this._hotTimer = null; }
     if (this._posTimer) { clearInterval(this._posTimer); this._posTimer = null; }
     this.tokens.clear();
@@ -752,10 +640,6 @@ class Engine extends EventEmitter {
     const pumpdev = this._pumpdevUrl();
     if (src === 'pumpdev') return this._connectPortal(pumpdev, 'pumpdev');
     if (src !== 'chain' && pumpdev) return this._connectPortal(pumpdev, 'pumpdev');
-    if (src === 'auto' && !this.s.rpcUrl) {
-      if (!this._tipShown) { this._tipShown = true; this._log('info', 'Tip: a free PumpDev key in Settings turns on the live trade stream.'); }
-      return this._connectPortal(PUMPPORTAL_WS, 'pumpportal');
-    }
     this._startChain();
   }
 
@@ -828,11 +712,16 @@ class Engine extends EventEmitter {
         ? 'Connected to the PumpDev stream (launches and trades).'
         : 'Connected to PumpPortal (launches only).');
     });
-    ws.on('message', (d) => this._onMessage(d.toString()));
+    ws.on('message', (d) => { if (this.ws === ws) this._onMessage(d.toString()); });
     ws.on('close', () => {
+      if (ws !== this.ws) return;
       this.connected = false;
       this.ws = null;
-      if (this.wantWs) setTimeout(() => this._connectPortal(url, label), 2500);
+      if (this.wantWs) this._portalRetry = setTimeout(() => {
+        if (!this.wantWs || this.ws || this.chain) return;
+        if (this.s.feedSource === 'auto') this._startChain();
+        else this._connectPortal(url, label);
+      }, 2500);
     });
     ws.on('error', (e) => {
       this._log('warn', 'Feed error: ' + e.message);
@@ -844,16 +733,6 @@ class Engine extends EventEmitter {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj));
   }
 
-  // A free trade-stream plan caps how many coins can be watched at once (PumpDev: 25) and how many control
-  // messages may be sent per ten seconds (40). Subscribing to every scanned coin broke both limits, so the engine
-  // keeps a budget: open positions always, then the best-scoring candidates, sent in one batched call.
-  //
-  // The set is STICKY and it is upgraded slowly. Scores are re-ranked every few seconds, and a plain "top twenty"
-  // swapped coins in and out on every tick: each swap is a control message, and the plan counts both the subscribe
-  // and the unsubscribe. Measured live, that churn is what produced "your free plan allows 25 live subscriptions per
-  // IP and this IP has reached it" while only twenty coins were ever wanted. So: positions always, what is watched
-  // keeps its slot while it is alive, and a newcomer only takes a slot from a coin that has been quiet for a while
-  // and is beaten by a clear margin.
   _syncSubscriptions() {
     if (this._feedLabel !== 'pumpdev') return;
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
@@ -939,9 +818,6 @@ class Engine extends EventEmitter {
       if (m.code === 'CONNECTION_LIMIT') this._log('warn', 'The PumpDev key is already connected somewhere else - close the other window.');
       else if (m.message) {
         this._log('warn', 'Feed: ' + m.message);
-        // The plan says the allowance is gone. The desk cannot add subscriptions to somebody else's budget, so it
-        // makes room for its own: positions first, fewer candidates, and the stream keeps working for the coins that
-        // matter. Without this every cycle asked for twenty again and the answer was the same refusal.
         if (/live subscriptions|reached it|upgrade your plan/i.test(String(m.message)) && this._subBudget > SUB_BUDGET_LIMITED) {
           this._subBudget = SUB_BUDGET_LIMITED;
           this._subLimitAt = Date.now();
@@ -963,7 +839,8 @@ class Engine extends EventEmitter {
     if (this.launchTimes.length > 500) this.launchTimes.shift();
     const t = {
       mint: m.mint, name: String(m.name || '').slice(0, 40), symbol: String(m.symbol || '?').slice(0, 12),
-      creator: m.traderPublicKey, createdAt: now, mc, mcHist: mc > 0 ? [[now, mc]] : [],
+      unsupported: Boolean(m.quoteMint && m.quoteMint !== WSOL),
+      creator: m.fromChain ? m.creator : m.traderPublicKey, createdAt: now, mc, mcHist: mc > 0 ? [[now, mc]] : [],
       trades: [], devSold: false, status: 'watching', score: 0, reason: 'New launch', lastActivity: now,
       devBuySol: Number(m.solAmount) || 0, launched: true, sources: new Set(['launch']), lastStreamAt: now,
     };
@@ -977,6 +854,7 @@ class Engine extends EventEmitter {
     if (!t) return;
     const now = Date.now();
     const mc = Number(m.marketCapSol);
+    if (!m.traderPublicKey || !Number.isFinite(Number(m.solAmount)) || Number(m.solAmount) <= 0) return;
     t.lastStreamAt = now;
     if (mc > 0) {
       t.mc = mc;
@@ -984,9 +862,16 @@ class Engine extends EventEmitter {
       if (t.mcHist.length > 150) t.mcHist.shift();
     }
     t.lastActivity = now;
+    this._recordTick(t);
     const side = m.txType;
     if (m.traderPublicKey === t.creator) {
-      if (side === 'sell') t.devSold = true;
+      if (side === 'sell') {
+        t.devSold = true;
+        if (m.fromChain && t.launched && now - t.createdAt < 30000) {
+          if (this.earlyCreatorSales.size >= 2048) this.earlyCreatorSales.delete(this.earlyCreatorSales.keys().next().value);
+          this.earlyCreatorSales.set(t.creator, { mint: t.mint, at: now });
+        }
+      }
       else t.devBuySol = (t.devBuySol || 0) + (Number(m.solAmount) || 0);
     } else {
       t.trades.push({ ts: now, side, sol: Number(m.solAmount) || 0, trader: m.traderPublicKey });
@@ -995,9 +880,6 @@ class Engine extends EventEmitter {
     const p = this.positions.get(m.mint);
     if (p && mc > 0) {
       p.extRef = null;
-      // Priced the moment the trade arrives, never at the next poll: the tick that decides exits runs every 50 ms and
-      // must not be reading a number the market has already left. This also stamps a fresh reading, which is what the
-      // hold rule waits for before it lets a level fire.
       this._pricePosition(p, now);
     }
     if (this.running && t.status === 'watching' && side === 'buy' && now - (t.lastEval || 0) >= 40) {
@@ -1006,7 +888,7 @@ class Engine extends EventEmitter {
     }
   }
 
-  _evalOne(t, now) {
+  _evalOne(t, now, candidates) {
     const s = this.s;
     if (t.status !== 'watching') return;
     if (this._unsupported.has(t.mint)) { t.status = 'skipped'; t.reason = 'Quoted in another token, not SOL'; return; }
@@ -1029,7 +911,10 @@ class Engine extends EventEmitter {
     t.growth = ev.m.growth;
     t.metricSource = ev.m.source;
     if (ev.dead) { t.status = 'skipped'; return; }
-    if (ev.pass) this._buy(t, ev);
+    if (ev.pass) {
+      if (candidates) candidates.push({ token: t, evaluation: ev });
+      else this._buy(t, ev);
+    }
   }
 
   _startMarket() {
@@ -1037,12 +922,9 @@ class Engine extends EventEmitter {
     this._marketBusy = false;
     // The three pollers are staggered on purpose: fired together they are a burst at a public host that answers with
     // a rate limit before it has served anything, and the first thing it refuses is a price an exit needs.
-    setTimeout(() => { if (this.running || this.positions.size) this._pollMarket(); }, 400);
+    this._marketStart = setTimeout(() => { if (this.running || this.positions.size) this._pollMarket(); }, 400);
     this._marketTimer = setInterval(() => this._pollMarket(), MARKET_EVERY_MS);
-    setTimeout(() => { this._hotTimer = setInterval(() => this._pollHot(), HOT_EVERY_MS); }, 800);
-    // An exit watches only the coins it is holding, which is one request for a handful of mints: that is cheap
-    // enough to ask far more often than the candidate board, and a stop that reads a half-second-old price is a
-    // stop that fills half a second late.
+    this._hotStart = setTimeout(() => { this._hotTimer = setInterval(() => this._pollHot(), HOT_EVERY_MS); }, 800);
     this._posTimer = setInterval(() => this._pollPositions(), POS_EVERY_MS);
   }
 
@@ -1051,8 +933,8 @@ class Engine extends EventEmitter {
     if (!this.positions.size) return;
     // One poll may still be in flight; a second is allowed after a tenth of a second, so a slow answer cannot shut the
     // feed for a whole cycle. Two in flight at once is the ceiling.
-    if (this._posBusy && Date.now() - (this._posAt || 0) < 100) return;
-    this._posBusy = true;
+    if (this._posBusy >= 2 || (this._posBusy && Date.now() - this._posAt < 100)) return;
+    this._posBusy = (this._posBusy || 0) + 1;
     this._posAt = Date.now();
     try {
       const mints = [...this.positions.keys()];
@@ -1063,9 +945,6 @@ class Engine extends EventEmitter {
         const p = this.positions.get(mint);
         if (p) this._pricePosition(p, before);
       }
-      // The tick that can close a position: the curve price when the stream is alive, one request for every coin held
-      // when it is not. A coin whose curve is speaking needs no quote at all - asking anyway spends a rate limit the
-      // whole app shares, and the free endpoints answer a shared limit with silence.
       const quiet = mints.filter((mint) => {
         const t = this.tokens.get(mint);
         return !(t && t.mc > 0 && before - (t.lastStreamAt || 0) < 2000);
@@ -1084,10 +963,6 @@ class Engine extends EventEmitter {
         }
         this._pricePosition(p, now);
       }
-      // The curve is the price that always exists: no key, no third-party service, and one request for every coin
-      // held. A quiet stream plus a price service that does not know a minute-old mint used to leave a position on the
-      // number it was bought at for its whole life - measured in a paper run, five of six positions never got a second
-      // reading and were closed by the time limit, blind, with every price rule unable to fire.
       if (now - (this._curveAt || 0) > CURVE_EVERY_MS) {
         this._curveAt = now;
         const blind = mints.filter((mint) => {
@@ -1107,10 +982,6 @@ class Engine extends EventEmitter {
             // A graduated coin's curve stopped at the graduation figure: it is not a price any more, and using it made
             // a coin on PumpSwap look like it had fallen 70% (or risen 300%) the moment the fossil was first read.
             if (c.complete) continue;
-            // The reserves are the market, not one print on it, so a FALL is taken at once - a stop must fire on it.
-            // A jump UP is different: our own entry may have been priced from a stale board, and a 3x in one 120 ms
-            // reading is almost always two numbers from two sources rather than a market move. Such a jump has to be
-            // seen twice, on two readings that agree, before it becomes the price.
             if (p.mc > 0 && c.mcSol > p.mc * CURVE_JUMP_UP) {
               const prev = p.pxOddCurve;
               p.pxOddCurve = c.mcSol;
@@ -1124,12 +995,6 @@ class Engine extends EventEmitter {
           }
         }
       }
-      // Depth, buyers and the dex are still read from the market board, only more slowly, because they change slowly.
-      // The price LANE for held coins, twice as fast as the board sweep below. A graduated coin has no curve left to
-      // read - its bonding curve froze at graduation - and the price service answers for only a share of mints, so the
-      // board of its PumpSwap pair is the only door that is always there. Measured on this desk: a graduated
-      // position's number could be a second and a half old while the coin was moving, which is the difference between
-      // a stop at -9% and a fill at -14%. Only coins with no live stream are asked for, and only the held ones.
       if (now - (this._posBoardAt || 0) > POS_BOARD_EVERY_MS) {
         this._posBoardAt = now;
         const quietHeld = mints.filter((mint) => {
@@ -1153,11 +1018,6 @@ class Engine extends EventEmitter {
         const rows = await this.market.enrich(mints, true);
         for (const [mint, row] of rows) {
           this._applyMarket(mint, row, { price: false });
-          // A brand-new coin is very often not in the price service at all, and without a trade stream that left a
-          // held position with no price but the one it was bought at. Measured in a paper run: three of four positions
-          // sat at their entry for the whole hold and were closed by the time limit, blind. The board is the last
-          // resort, and on a coin whose curve has not graduated the pump.fun pair IS the market; the anchor in
-          // `_pricePosition` still stops one wild print from dragging the number.
           const p = this.positions.get(mint);
           const t = this.tokens.get(mint);
           const curveLive = t && t.mc > 0 && now - (t.lastStreamAt || 0) < 2000;
@@ -1169,11 +1029,6 @@ class Engine extends EventEmitter {
           }
         }
       }
-      // A position nobody is pricing any more: the price service dropped the mint, the curve graduated into PumpSwap,
-      // or the trade stream for it died. The last number accepted is then the only number the rules can read, and it
-      // can be minutes old - measured live, a coin that went from a 50k market cap to nothing kept the desk at +71%.
-      // So this one mint is asked for directly, and a fresh answer replaces the old quote even though one is on
-      // record. Cheap: it only runs for a coin that has already gone quiet, and at most once every few seconds.
       if (now - (this._lostAt || 0) > 3000) {
         this._lostAt = now;
         const lost = mints.filter((mint) => {
@@ -1196,25 +1051,10 @@ class Engine extends EventEmitter {
     } catch (_) {
       /* the wide sweep reports its own failures */
     } finally {
-      this._posBusy = false;
+      this._posBusy--;
     }
   }
 
-  /**
-   * A row that may price a position: the pool the coin actually trades in, and nothing else.
-   *
-   * RULE ADDED 2026-11-05 (measured in a paper run on the shipped plan): `enrich` hands back the pair with the deepest
-   * liquidity, and a young pump.fun coin is often listed on a copy-cat exchange with a handful of dollars in it - whose
-   * USD price is not the price this desk can sell at. The quote lane accepted any row's number, so one such pair moved a
-   * held position **+434% in thirty seconds** and the target sold it there. `_applyMarket` has refused foreign prices for
-   * the market cap since $MGOAT; the price lane now refuses them too.
-   *
-   * RULE NARROWED 2026-11-05 (measured on `$SAFU`: stopped at -101.4% in one session and sold at "+1142.5%" in the
-   * next): a graduated coin keeps its OLD pump.fun pair listed, frozen at the graduation figure, and that fossil is not
-   * a price. Both pairs are the coin's own, so the exchange name alone cannot tell them apart - the coin's own state
-   * has to: graduated, only the PumpSwap pool; on the curve, its pump.fun pair (a PumpSwap row is accepted too, because
-   * a coin can graduate between two readings and the flag can lag one sweep behind).
-   */
   _ownPool(row, t) {
     const dex = row && row.dexId ? String(row.dexId) : '';
     if (!dex) return true;
@@ -1222,12 +1062,6 @@ class Engine extends EventEmitter {
     return dex === 'pumpfun' || dex === 'pumpswap' || dex === 'pump-amm';
   }
 
-  /**
-   * The price a position is measured at. The bonding curve itself comes first - the same number the buy was priced
-   * at, straight from the trade stream - and an aggregator only fills in while that stream is quiet. Measured live: a
-   * fresh coin's aggregator quote moved +135% to -70% within a second, because our own sale is a large share of a
-   * pool that small. Exits cannot be decided on a number like that.
-   */
   _pricePosition(p, now = Date.now()) {
     if (p.closing) return;
     // A holding adopted from the wallet can arrive with no reference price. The first price it is seen at becomes
@@ -1236,23 +1070,7 @@ class Engine extends EventEmitter {
     const t = this.tokens.get(p.mint);
     if (t && t.mc > 0 && now - (t.lastStreamAt || 0) < 2000) {
       const next = t.mc;
-      // One trade can print a number that is not a market: a different pool, a misparsed field, a single wash trade.
-      // A move of more than half the position's value in ONE reading is therefore asked to appear twice before it
-      // moves the position - a real crash prints trades every few milliseconds, so the second look costs nothing,
-      // while a phantom print can never fire a stop or a target on its own. Measured in a paper session: a coin
-      // "stopped out" at -63% one hundred and thirty milliseconds after it was bought.
-      // RULE NARROWED 2026-11-05 (measured on $sol: entry read from a board row, the first print after it was 4x, and
-      // a take profit fired at "peaked +301.4%" into a fill at -15.0%): the FIRST reading is exempt only when the entry
-      // was the same pool's own number. A board row is another market's opinion, so a jump away from it is exactly the
-      // case that must be confirmed before any rule may use it.
       const seeded = p.pxSeed && p.pxSource === 'curve';
-      // RULE CHANGED 2026-11-05 (measured: `$ALIBI` stopped out at -44.8% held 0s, `$COGE` at -67.5% held 1s, and in
-      // the same session `$DNUT` "peaked at +159.3%" two seconds after the buy): the first print after an entry is the
-      // one place where a wrong number looks exactly like a crash or a pump. A pool-priced entry used to trust it
-      // blindly, and a 45% disagreement was inside the wild-move bar anyway - so the position opened 45% down and the
-      // stop fired on the number rather than on the market. The first print now gets a TIGHTER bar (20%) in both
-      // directions: a real move prints again within milliseconds, and the stop then fires at the price the market
-      // really is, not at the price one reading claimed.
       const bar = seeded ? 0.2 : WILD_MOVE_FRAC;
       if (p.mc > 0 && Math.abs(next / p.mc - 1) > bar) {
         const prev = p.pxOddChain;
@@ -1282,11 +1100,6 @@ class Engine extends EventEmitter {
       return;
     }
     const next = p.extRef.mc * (px / p.extRef.priceUsd);
-    // A FALL is the market and is taken on the first reading, however big it is: the stop has to fire on it. Only a
-    // jump UP needs a second opinion, because a printed price on a thin pool can be one big order rather than a move.
-    // Measured live on 2026-11-05: $Saylor went from a 50k market cap to nothing while the desk kept printing +71%,
-    // because every reading after the crash was refused as "too big a jump" from the last accepted one - and refusing
-    // it kept that old number in place for ever, so the stop, the target and the trail were all reading a ghost.
     if (p.mc > 0 && next > p.mc && (next / p.mc - 1) * 100 > MAX_TICK_JUMP_PCT) {
       // A separate slot from the curve's: a quote and a curve reading are two different pools, so one cannot be the
       // second opinion the other needs.
@@ -1301,26 +1114,12 @@ class Engine extends EventEmitter {
     this._pxDirty = true;
   }
 
-  /**
-   * The percentage the card shows, or null while no price is known. A missing reference price used to be published as
-   * 0.0%, which on screen is indistinguishable from a coin that has not moved - so the card claimed a fact it did not
-   * have. The rules keep using the number (`_pnlPct`), the screen gets the truth.
-   */
   _pnlView(p) {
     if (!(p.entryMc > 0) || !(p.mc > 0)) return null;
     const v = this._pnlPct(p);
     return Number.isFinite(v) ? v : null;
   }
 
-  /**
-   * The positions the panel may draw: the ones that were really bought.
-   *
-   * RULE ADDED 2026-11-05 (the owner: "całe UI z Open positions skacze, pojawiają się monety których nie kupił"): the buy
-   * path reserves a slot in `positions` BEFORE it asks the pool for a price, so a second coin cannot take the same slot
-   * while the first is still pricing - and it deletes that placeholder again when the price is refused (measured in one
-   * paper session: 500 refusals). The panel was reading the raw map, so every refused candidate appeared for a fraction
-   * of a second and vanished, dragging the whole list with it. `priced` marks the point where a position is real.
-   */
   _openPositions() {
     return [...this.positions.values()].filter((p) => p.priced !== false);
   }
@@ -1332,9 +1131,6 @@ class Engine extends EventEmitter {
       mint: p.mint, symbol: p.symbol, pnlPct: this._pnlView(p), mc: p.mc, solIn: p.solIn,
       heldSec: Math.round((now - p.openedAt) / 1000), status: p.status, paper: p.paper,
       pending: Boolean(p.pending), closing: Boolean(p.closing),
-      // How old the price behind the percentage is. A number nobody has refreshed must not look live: the owner
-      // watched a coin go from a 50k market cap to nothing while the card still read +71%, because the reading behind
-      // it had stopped arriving and nothing on screen said so.
       pxAgeSec: p.pxAt ? Math.round((now - p.pxAt) / 1000) : null,
     }));
   }
@@ -1404,9 +1200,6 @@ class Engine extends EventEmitter {
   }
 
   _marketError(e) {
-    // One line a minute with a count, not one line per failure. Measured live on 2026-11-05: ten identical "rate
-    // limited" warnings in six minutes, all of them handled, and a wall of them is what teaches a keeper to stop
-    // reading warnings - which is exactly how the next real one gets missed.
     this._marketFails = (this._marketFails || 0) + 1;
     const now = Date.now();
     const host = e && e.host ? String(e.host) : 'market data';
@@ -1431,12 +1224,6 @@ class Engine extends EventEmitter {
     }
   }
 
-  /**
-   * Room for a newcomer. A full map used to answer "no": the coin was simply never tracked, so the desk stopped seeing
-   * new launches while the log kept counting them as "new" - measured live on 2026-11-05, the tracked set sat at 400 and
-   * no coin entered for the rest of the session. The oldest, lowest-scoring coin that nobody holds is worth less than a
-   * launch that is five seconds old, so it makes way.
-   */
   _makeRoom() {
     if (this.tokens.size < MAX_TRACKED) return true;
     this._prune(true);
@@ -1495,16 +1282,6 @@ class Engine extends EventEmitter {
     return true;
   }
 
-  /**
-   * The dex tells the two markets apart, and the buy route uses it: the bonding curve is `pump`, a graduated coin is
-   * `pump-amm`. Guessing between them is what produced a stream of on-chain rejections.
-   *
-   * RULE ADDED 2026-11-05 (measured in a paper run on the shipped plan): the flag was only ever set from the market
-   * BOARD, and a coin that arrived through a discovery HINT carries the same `dexId` but was never marked. Its entry
-   * then treated the PumpSwap row as the pool it could buy on, which is the phantom-entry class in reverse: $BURNIT
-   * opened and stopped out 32.9% down six seconds later, and $Microduck at -93.6% after ninety. One place decides
-   * this now, so a coin cannot be graduated at one door and a launch at the next.
-   */
   _markMarket(t, dexId) {
     if (!t || !dexId) return;
     if (dexId === 'pumpswap' || dexId === 'pump-amm') t.graduated = true;
@@ -1526,31 +1303,19 @@ class Engine extends EventEmitter {
     // The dex tells the two markets apart, and the buy route uses it: the bonding curve is `pump`, a graduated coin
     // is `pump-amm` (see `_markMarket`).
     this._markMarket(t, row.dexId);
-    // RULE ADDED 2026-11-05 (measured on $MGOAT and earlier on $sol): a pump.fun coin also gets listed on other
-    // exchanges as a copy-cat pool with a handful of dollars in it, and the board hands back the row with the deepest
-    // liquidity - which for a launch still on its curve is often one of THOSE. Their price is not the price this desk
-    // can sell at, and letting it set the market cap produced a "+414%" peak on a position that then filled at -15%.
-    // A price from another exchange is kept for depth and buyer counts, never for the number the rules act on.
     const foreignPool = Boolean(row.dexId) && row.dexId !== 'pumpfun' && row.dexId !== 'pumpswap' && row.dexId !== 'pump-amm';
     t.ext = { ...row, mcSol, at: now, foreignPool };
     if (row.symbol && row.symbol !== '?') t.symbol = row.symbol;
     if (row.name) t.name = row.name;
     if (row.pairCreatedAt > 0) t.launchedAt = row.pairCreatedAt;
-    // The board answering is not the coin doing something. `lastActivity` means "a trade arrived", and it is the
-    // clock the pruner and the subscription set read: refreshing it from the board kept 400 coins alive for ever,
-    // clogged the map and stopped every new launch from being tracked (measured live on 2026-11-05). The price
-    // freshness check below counts the board's own clock instead.
     if (mcSol > 0 && !foreignPool && now - (t.lastStreamAt || 0) > STREAM_FRESH_MS) {
       t.mc = mcSol;
       t.mcHist.push([now, mcSol]);
       if (t.mcHist.length > 150) t.mcHist.shift();
       t.lastBoardAt = now;
+      this._recordTick(t);
     }
     const p = this.positions.get(mint);
-    // The market board never moves the price a position is measured at: its quote is an aggregate of every pool the
-    // mint trades in, and on a fresh coin that is not the pool the order will fill against. It still sets the fallback
-    // quote, used only while the trade stream is quiet - and a quote from another exchange is not used at all, because
-    // it is a different market with a different price and the exit cannot fill there.
     if (p && !foreignPool && row.priceUsd > 0 && opts.price !== false && !(p.pxPull > 0)) { p.pxPull = row.priceUsd; p.pxPullAt = now; }
   }
 
@@ -1596,9 +1361,6 @@ class Engine extends EventEmitter {
         // A market row counts transactions, not wallets, so distinct buyers are estimated at half the buys. Every
         // rule that compares against a buyer bar treats this number as the same kind of estimate.
         buyers: Math.round((ext.buys || 0) / 2),
-        // Without an exchange rate a dollar figure cannot be turned into SOL, and the honest answer is "no evidence
-        // of buying", not a division by a made-up 1 - which booked thousands of SOL of net flow nobody ever spent and
-        // handed every scanned coin full marks on the strongest entry rule.
         net: solUsd > 0 ? (ext.netUsd || 0) / solUsd : 0,
         growth: (ext.change5m || 0) / 100,
         topShare: 0,
@@ -1616,32 +1378,32 @@ class Engine extends EventEmitter {
     const age = (now - t.createdAt) / 1000;
     const m = this._metrics(t, now, 20);
     if (t.devSold) return { score: 0, pass: false, dead: true, reason: 'Creator sold', m };
+    if (t.unsupported) return { score: 0, pass: false, dead: true, reason: 'Quoted in another token, cannot be bought here', m };
+    if (s.mode === 'live' && s.minLiqUsd > 0 && !(t.ext && !t.ext.foreignPool && now - t.ext.at >= 0
+      && now - t.ext.at < 60000 && t.ext.liqUsd >= s.minLiqUsd)) {
+      return { score: 0, pass: false, dead: false, reason: 'Waiting for current pool liquidity', m };
+    }
+    if (s.mode === 'live' && (!t.creator || m.source !== 'stream' || !t.lastStreamAt || now - t.lastStreamAt > STREAM_FRESH_MS)) {
+      return { score: 0, pass: false, dead: false, reason: 'Waiting for verified creator and fresh wallet-level trades', m };
+    }
+    const previousSale = this.earlyCreatorSales.get(t.creator);
+    if (previousSale && previousSale.mint !== t.mint && now - previousSale.at < 3600000) {
+      return { score: 0, pass: false, dead: false, reason: 'Creator sold another launch within its first 30 seconds', m };
+    }
     const trending = age > s.entryWindowSec;
     if (trending && !s.trendMode) return { score: t.score, pass: false, dead: true, reason: 'Entry window closed', m };
     const external = m.source === 'market';
     // The row the entry was judged on. It carries the creator's bag, the pool's depth and the biggest buyer's share, and
     // both kinds of plan read them (see the simple branch below).
     const ext = t.ext;
-    // A scanned coin is already a few minutes old when it shows up, so its market cap has usually grown past the
-    // launch band. It gets a wider ceiling: the entry size and the stop are what limit the risk, not the cap.
-    // RULE ADDED 2026-11-05 (measured in a paper run on the live market): in the SIMPLE plan the market cap band means
-    // exactly what is typed. The four-times ceiling exists for the full desk's scanned movers, but it let a 701 SOL coin
-    // into a 60-500 band - and coins that late in their life are where the instant -20% entries came from.
     const maxMc = s.simpleMode ? s.maxMcSol : (external ? s.maxMcSol * 4 : s.maxMcSol);
-    // RULE ADDED 2026-11-05: how old a coin may be, in both directions. A launch younger than `minTokenAgeSec` has no
-    // tape to judge (its buyers are the dev and his friends), and one older than `maxTokenAgeSec` has already had its
-    // move - the same reason the five minute ceiling exists, expressed in the coin's whole life. Zero is off, and a
-    // coin whose age nobody knows is not refused by a clock that has nothing to read.
     const coinAgeSec = (now - (Number(t.launchedAt) || Number(t.createdAt) || 0)) / 1000;
     const ageKnown = Number.isFinite(coinAgeSec) && coinAgeSec > 0;
     const minAge = Number(s.minTokenAgeSec) || 0;
     const maxAge = Number(s.maxTokenAgeSec) || 0;
-    const tooYoung = ageKnown && minAge > 0 && coinAgeSec < minAge;
+    const tooYoung = minAge > 0 && (!ageKnown || coinAgeSec < minAge);
     const tooOld = ageKnown && maxAge > 0 && coinAgeSec > maxAge;
     const minScore = s.minScore + (t.creatorUnknown ? 10 : 0);
-    // The profile's buyer bar is written for a twenty-second window of distinct wallets. A market row counts
-    // transactions over five minutes, so it is scaled down here; measured on live data, a healthy young coin
-    // carries twenty to forty of them.
     const needBuyers = external ? Math.max(6, Math.round(s.minBuyers * 2)) : s.minBuyers;
     const needNet = external ? Math.max(0.4, Math.round(s.minNetFlowSol * 100) / 100) : s.minNetFlowSol;
     const ratio = m.buys / Math.max(1, m.buys + m.sells);
@@ -1657,17 +1419,11 @@ class Engine extends EventEmitter {
     // A number that is not a number can never be "below the minimum": every comparison against NaN is false, so a
     // broken input would walk straight through the entry gate. Zero is what it is worth.
     if (!Number.isFinite(score)) score = 0;
-    // Simple settings: the common numbers gate the entry - the band, the number of buyers, "the price is not falling" -
-    // while the score, the net flow, the buyer ceiling, the five minute band and the holder bar are off, because the
-    // person chose the simple mode precisely so those would stop deciding. The score is still computed and shown.
-    //
-    // RULE CHANGED 2026-11-05 (measured: one rug took a whole session - `$SAFU` peaked at +3.5% and was stopped at
-    // -101.4%, and the same coin left the wallet unable to sell at 17:25): the four checks that only REFUSE a rug-shaped
-    // coin are protection, not tuning, so they stay on in the simple plan as well. None of them costs a request - the
-    // creator's bag, the pool's depth and the biggest buyer's share arrive with the row the entry was judged on anyway.
     if (s.simpleMode) {
       let reason = '';
-      if (!s.allowGraduated && t.graduated) reason = 'Graduated to PumpSwap';
+      if (ext && ext.mintRisk) reason = 'Creator can still mint more';
+      else if (ext && ext.freezeRisk) reason = 'Token can be frozen';
+      else if (!s.allowGraduated && t.graduated) reason = 'Graduated to PumpSwap';
       else if (t.unsupported) reason = 'Quoted in another token, cannot be bought here';
       else if (tooYoung) reason = `Too new (${Math.round(coinAgeSec)}s old, needs ${minAge}s)`;
       else if (tooOld) reason = `Too old (${Math.round(coinAgeSec / 60)} min)`;
@@ -1711,9 +1467,6 @@ class Engine extends EventEmitter {
     else if (s.maxChange5mPct > 0 && m.marketGrowth != null && m.marketGrowth * 100 > s.maxChange5mPct) {
       reason = `Already up ${(m.marketGrowth * 100).toFixed(0)}% in 5m`;
     }
-    // The other side of the same coin: a launch that has NOT moved yet is where a move starts, and one that has
-    // already run 40-60% is where it ends. Measured in paper on the live market, buys at the top of a five minute
-    // push were the ones that stopped out in two to twelve seconds.
     else if (s.minChange5mPct > 0 && m.marketGrowth != null && m.marketGrowth * 100 < s.minChange5mPct) {
       reason = `Only up ${(m.marketGrowth * 100).toFixed(0)}% in 5m, no move to join yet`;
     }
@@ -1728,9 +1481,6 @@ class Engine extends EventEmitter {
   }
 
   _scan(now) {
-    // Bounded work per tick: a rotating slice of the table, at most one evaluation per token every 700 ms. With a
-    // few hundred coins tracked this keeps the hundred millisecond loop flat instead of walking every coin's trade
-    // history ten times a second.
     const all = [...this.tokens.values()];
     if (!all.length) return;
     const due = [];
@@ -1741,38 +1491,22 @@ class Engine extends EventEmitter {
       t.lastCheck = now;
       due.push(t);
     }
-    for (const t of due) this._evalOne(t, now);
+    const candidates = [];
+    for (const t of due) this._evalOne(t, now, candidates);
+    candidates.sort((a, b) => b.evaluation.score - a.evaluation.score || b.evaluation.m.net - a.evaluation.m.net);
+    for (const { token, evaluation } of candidates) this._buy(token, evaluation);
     if (now - (this._pruneAt || 0) > 10000) { this._pruneAt = now; this._prune(false); }
   }
 
-  /**
-   * How long a risk rule waits before it sells. A stop, a trail or a break even is watching money leave, so it only
-   * has to be seen on a second, fresh reading (`STOP_HOLD_MS`), and a coin already through twice its stop - or twice
-   * the trail's give-back - is a crash, not a threshold: that one sells on the first reading. `triggerHoldMs` is not a
-   * ceiling here either: it is the guard for a take profit, where a spike has to prove itself before anything is sold
-   * into it.
-   */
   _riskHoldMs(rule, pnl, peak, source) {
     const s = this.s;
     const stop = Math.abs(Number(s.stopLossPct) || 0);
-    // The bonding curve's reserves are the pool's own state, not one print on it: there is nothing to confirm. A
-    // reading taken from a quote is a different thing - any single aggregator number can be wrong - so that one still
-    // has to be seen twice.
     if (source === 'curve') return 0;
     if (rule === 'Stop loss' && stop > 0 && pnl <= -stop * 2) return 0;
-    // A TARGET IS A CEILING: if the price is already five points past it, waiting to "confirm" the spike is waiting for
-    // the spike to be given back. Measured in a paper run on the live market: `$SMOKING` peaked at +36.7%, the give-back
-    // fired first and the row booked +4.1% because the take profit was still inside its 300 ms confirmation while the
-    // coin came back down. A level that has been clearly cleared needs no second opinion.
     if (/^Take profit/.test(rule)) {
     const target = rule === 'Take profit' ? Number(this.s.takeProfitPct) || 0 : Number(this.s.tp1Pct) || 0;
     if (target > 0 && pnl >= target + 5) return 0;
     }
-    // RULE ADDED 2026-11-05 (measured on $JIMOTHY: "Peak give-back (peaked at +36.7%)" booked at -5.5%, held 11s): a
-    // give-back is a FLOOR, and waiting for it to be confirmed is waiting for the floor to be gone. The 400 ms
-    // confirmation on a coin already under its level cost twenty points. A stop has the same exemption below, and now
-    // so has every rule whose level is a floor rather than a target: if the price is already clearly through it, the
-    // spike it is protecting against has been disproved by the price itself.
     if (rule === 'Peak give-back' && Number.isFinite(peak) && pnl <= peak / 2 - 5) return 0;
     if (rule === 'Break even' && Number.isFinite(peak) && pnl <= -5) return 0;
     if (rule === 'Trailing stop') {
@@ -1782,16 +1516,6 @@ class Engine extends EventEmitter {
     return Math.min(Math.max(0, Number(s.triggerHoldMs) || 0), STOP_HOLD_MS);
   }
 
-  /**
-   * How much of a peak the trailing stop gives back, in net points. It is a SHARE of the peak, not a fixed number of
-   * points, because every launch pull-back is proportional to the run: a 15-20% wobble is normal on a coin up 60%, and
-   * a flat 4-point trail sold those runners at the first wobble. That is the whole shape of the desk - the rare big
-   * winner has to be allowed to be big, or a hundred small losses have nothing to pay for them.
-   *
-   * Measured before (fixed give-back, tightening to 5 after the first rung and to 2 once past three times the target):
-   * every profit rule in a paper session closed between +6% and +12% while the losses filled at -21% to -33%, which
-   * cannot be won by any entry rule. The floor (`trailGivePct`) still protects a small peak tightly.
-   */
   _trailGive(peak) {
     const floor = Math.max(0, Number(this.s.trailGivePct) || 0);
     const wide = Math.max(0, Number(peak) || 0) * TRAIL_GIVE_FRAC;
@@ -1802,26 +1526,18 @@ class Engine extends EventEmitter {
     // A position with no reference price cannot be measured. Returning 0 instead of Infinity keeps every rule quiet
     // until a real price arrives, which is the only honest reading of "nobody knows what this cost".
     if (!(p.entryMc > 0) || !(p.mc >= 0)) return 0;
+    if (p.paper) {
+      const gross = p.solIn * p.mc / p.entryMc;
+      const proceeds = gross * (1 - this._paperSlippage(this.tokens.get(p.mint), gross)) * (1 - FEE);
+      const cost = p.solIn * (1 + FEE) + (p.feeBuy || 0);
+      return cost > 0 ? (proceeds - this._feeFor(true) - cost) / cost * 100 : 0;
+    }
     return (p.mc / p.entryMc - 1) * 100 - this._costPct(p);
   }
 
-  /**
-   * Everything a trade costs, as a percentage of the ticket: the protocol both ways plus the tips that are actually
-   * paid. The tips are a fixed amount, so on a small ticket they are most of the round trip - at a 0.004 SOL ticket
-   * two 0.0002 SOL tips and the protocol are 12% of the ticket, so a 12% stop is reached only once the price has
-   * fallen about 24%. Every rule and every percentage the window shows is measured net of this, because that is the
-   * number that decides whether money was made.
-   *
-   * The tips are the ones the trade really pays, not the configured ceiling: smart fees follow the live fee market,
-   * so the entry tip is the one recorded on the position and the exit tip is what an exit would cost right now.
-   */
   _costPct(p) {
     const ticket = Math.max(0.001, Number(p.solIn) || 0);
     const entry = Number(p.feeBuy) || 0;
-    // The exit tip is the one priced when the coin was taken, not the one the network happens to ask for this tick.
-    // Smart fees follow the live fee market, so a position measured against the live tip showed a percentage that
-    // wandered by a tenth of a point twice a second with the price standing perfectly still - and the stop and the
-    // trail moved with it. A trade is judged on one basis: what it cost when it was taken.
     const exit = Number(p.feeExitEst) || Number(this._feeFor(true)) || 0;
     const tips = ((entry + exit) / ticket) * 100;
     return FEE * 2 * 100 + (Number.isFinite(tips) ? tips : 0);
@@ -1847,50 +1563,17 @@ class Engine extends EventEmitter {
     return 'the chain refused it';
   }
 
-  /**
-   * The price an entry is taken at, and the refusal when the board behind it is out of date.
-   *
-   * The board price is what the entry rules were judged on, and it can be a minute old: a scanned coin's row is
-   * refreshed in tens of seconds, a rate-limited exchange answer is older than its arrival stamp, and a launch can give
-   * back half its move in that time. Measured in paper on the live market, entries were booked at the board's price and
-   * the very first reading - the pool's own reserves - showed -18% to -31%, which booked a stop loss 0 to 16 seconds
-   * after the buy on a coin that had not fallen that far. That is not the exit rule being late, it is the entry being
-   * blind.
-   *
-   * So the entry asks the pool, right now, in both modes:
-   *  - the pool is the number the order fills against, so it is the entry price (a paper trade then measures the plan
-   *    instead of measuring a stale number);
-   *  - a pool more than `BOARD_STALE_FRAC` BELOW the board means the coin is falling right now, while the row we judged
-   *    says it is rising. That is the single most common shape of a losing entry, and the entry is refused;
-   *  - a pool far ABOVE the board is a coin running away from a slow row. The entry is still taken, at the pool's
-   *    price, because that is what it would cost.
-   *
-   * With no curve to read (a graduated coin, or a failing node) the board is used only when the coin's own trade stream
-   * is fresh: a coin priced by nothing recent is not a coin to buy.
-   */
   async _entryPrice(t) {
     const board = Number(t.mc) || 0;
     let pool = 0;
-    // One read with a short budget: a node that cannot answer in 700 ms is not a node to wait for while a coin is
-    // moving, and the entry falls back to the board only when the coin's own trade stream is fresh. An engine started
-    // offline (the test harness) has no pool to ask and must not wait for one.
     try {
       if (!this.offline) {
         const curves = await readCurves((fn, opts) => this.rpcCall(fn, { attempts: 1, budgetMs: 700, ...opts }), [t.mint]);
         const row = curves.get(t.mint);
-        // A FINISHED curve is a fossil: its reserves stop moving when the coin graduates, so its "market cap" stays at
-        // the graduation figure for ever while the coin trades on PumpSwap at whatever the pool there says. Measured in
-        // a paper run on the live market: two coins were bought at a frozen curve price and then "ran" +264% and +308%
-        // in a second, which was not a move, it was the fossil being read as a price.
         if (row && row.mcSol > 0 && !row.complete) pool = row.mcSol;
       }
     } catch (_) { pool = 0; }
     if (!(pool > 0)) {
-      // RULE CHANGED 2026-11-05: the board is not a buy price. Every wrong percentage today ($sol +301%, $MGOAT
-      // +414%, $WIMPOSTER +159% - all filled at a loss) came from entering on somebody else's number while the order
-      // filled against the pool. The only honest entry is a price the order will really be filled at: the curve's own.
-      // Two narrow exceptions, both of which ARE the pool: an offline engine (the paper test harness, no money), and
-      // a graduated coin whose PumpSwap row is the very pool the `auto` buy fills against.
       const row = t.ext;
       const graduatedRow = row && (row.dexId === 'pumpswap' || row.dexId === 'pump-amm') && Date.now() - (row.at || 0) < ENTRY_PX_MAX_AGE_MS;
       if (!this.offline && !graduatedRow) return { mc: board, refuse: 'No pool price to buy on' };
@@ -1899,11 +1582,6 @@ class Engine extends EventEmitter {
       if (Date.now() - heard > ENTRY_PX_MAX_AGE_MS) return { mc: board, refuse: 'No fresh price to buy on' };
       return { mc: board, src: 'board', why: graduatedRow ? 'its PumpSwap row' : 'offline harness' };
     }
-    // A pool three times the board is not the same coin (a foreign supply, a wrong account): the board is the safer
-    // number there, and the position's own curve reading will correct it within the second anyway. A board with NO
-    // price at all is the other case: a launch the board has not seen yet still has reserves, and the pool is what the
-    // order fills against. Passing the board's zero through opened the position at 0, so every percentage was then
-    // measured from the first price seen *after* the buy instead of from what was paid.
     const mc = board > 0 && pool >= board * 3 ? board : pool;
     t.mc = mc;
     if (board > 0 && pool < board * (1 - BOARD_STALE_FRAC)) {
@@ -1912,12 +1590,6 @@ class Engine extends EventEmitter {
     return { mc, src: 'curve' };
   }
 
-  /**
-   * The holder count for one candidate, fetched once and remembered for ten minutes. Only the extra entry filters
-   * ask for it, so the market host is never hammered: a coin that passes the rest of the gates costs one request,
-   * and a coin that is already cached costs none. A count that could not be read comes back as 0 - the caller is the
-   * one that decides what "unknown" means.
-   */
   async _holdersFor(t) {
     const now = Date.now();
     if (t.holders > 0 && now - (t.holdersAt || 0) < 10 * 60000) return t.holders;
@@ -1930,10 +1602,6 @@ class Engine extends EventEmitter {
       }
     } catch (_) { /* unknown */ }
     if (!(t.holders > 0)) {
-      // The bar is a filter the user asked for, so an unreadable count still refuses the coin - but it must not do so
-      // silently and for ever. Measured on 2026-11-05: GeckoTerminal refused this address for hours, and with the
-      // holder bar on (the one press preset switches it on) that meant NO buy could pass, with only "Holder count
-      // unknown" on each coin to explain it. Said once, in words, with what to do about it.
       this._holderMisses = (this._holderMisses || 0) + 1;
       if (this._holderMisses >= 3 && (!this._holderWarnAt || now - this._holderWarnAt > 5 * 60000)) {
         this._holderWarnAt = now;
@@ -1947,8 +1615,8 @@ class Engine extends EventEmitter {
     const s = this.s;
     const now = Date.now();
     this.buyTimes = this.buyTimes.filter((x) => now - x < 60000);
-    if (this.buyTimes.length >= s.maxBuysPerMin) return;
-    if (this.positions.size >= s.maxPositions) return;
+    if (this.buyTimes.length >= s.maxBuysPerMin) { t.reason = 'Entry rate limit reached'; return; }
+    if (this.positions.size >= s.maxPositions) { t.reason = 'All position slots are occupied'; return; }
     // One entry per coin at a time, and never a coin that was just closed. An exit takes about a second to land,
     // and checking this only when the decision is made let the same falling coin be bought again in that gap.
     if (this.positions.has(t.mint) || this._unsupported.has(t.mint)) return;
@@ -1965,20 +1633,14 @@ class Engine extends EventEmitter {
       return;
     }
     const sol = Math.min(s.buyAmountSol, HARD_MAX_SOL_PER_TRADE);
-    // RULE ADDED 2026-11-05 (measured on a 0.001 SOL ticket): a trade whose fees are a fifth of the ticket is not a
-    // trade, it is a donation. Two 0.0002 SOL tips are 40% of 0.001 SOL, so every position opened at -42% and the
-    // stop fired within a second, five times in a row - and no entry, however good, could have paid for that. The desk
-    // now refuses the configuration and says exactly what to change, instead of quietly losing the ticket each time.
-    const roundTripPct = FEE * 200 + (this._feeFor(false) + this._feeFor(true)) / Math.max(1e-9, sol) * 100;
-    // RULE CHANGED 2026-11-05: the ceiling is a SETTING now (`maxRoundTripPct`, 5% floor) instead of a constant, so a
-    // desk that pays its fees in a different shape can move it - but it can never be switched off, because the moment
-    // it is off every ticket at every size looks tradable and the smallest one loses to its own tips.
+    const extraNetwork = s.mode === 'live' ? networkExtras(s) : 0;
+    const roundTripPct = roundTripFeePct(sol, this._feeFor(false) + extraNetwork, this._feeFor(true) + extraNetwork);
     const maxTrip = clamp(Number(s.maxRoundTripPct) || 20, 5, 90);
     if (roundTripPct > maxTrip) {
+      t.reason = `Estimated fees ${roundTripPct.toFixed(1)}% exceed the ${maxTrip}% limit`;
       if (!this._costWarnedAt || now - this._costWarnedAt > 300000) {
         this._costWarnedAt = now;
-        const need = Math.ceil((this._feeFor(false) + this._feeFor(true)) / ((maxTrip - FEE * 100) / 100) * 1e4) / 1e4;
-        this._log('error', `Not buying: a ${sol} SOL ticket cannot pay its own fees - the round trip costs ${roundTripPct.toFixed(0)}% of it (two tips of ${Number(s.priorityFeeSol || 0).toFixed(4)} SOL plus 2% of the protocol). Raise the buy amount to at least ${need.toFixed(3)} SOL, or lower the priority fee. Nothing is lost by waiting.`);
+        this._log('warn', `Entry skipped: estimated round-trip fees are ${roundTripPct.toFixed(2)}% of the ticket, above the ${maxTrip}% limit. Price impact is additional.`);
       }
       return;
     }
@@ -1992,32 +1654,43 @@ class Engine extends EventEmitter {
       }
       return;
     }
-    // The extra entry filters, on the freshest count the market can give. A coin under the holder bar is not bought,
-    // and neither is a coin whose count cannot be read: a filter that silently passes when its data source is down
-    // is not a filter. The coin stays on the list with the reason, so the market explains itself. Off while the
-    // simple settings are on - those are an advanced rule, and the simple mode turns advanced rules off.
     if (!s.simpleMode && s.deepEntry && s.minHolders > 0) {
       const holders = await this._holdersFor(t);
       if (holders < s.minHolders) {
         t.reason = holders > 0 ? `Needs ${s.minHolders} holders (has ${holders})` : 'Holder count unknown';
         return;
       }
-      // That lookup is a network wait, and the desk may have taken this coin - or filled its last slot - while it was
-      // in the air. A guard before an await is only a guess about the state after it, and two entries into one coin
-      // is two losses instead of one. Measured in a paper session: two buys of one coin 16 ms apart, because both
-      // calls passed the same check before either had written its position.
       const cool2 = this.cooldowns.get(t.mint);
       if (this.positions.has(t.mint) || this.positions.size >= s.maxPositions || (cool2 && Date.now() < cool2)) return;
     }
+    if (s.mode === 'live') {
+      if (t.riskChecking) return;
+      t.riskChecking = true;
+      let riskReason;
+      try { riskReason = await this.risk.check(t.mint); } finally { t.riskChecking = false; }
+      if (riskReason) {
+        t.reason = riskReason;
+        // RULE ADDED 2026-11-05 (1.0.1): a gate whose data source is down blocks EVERY live entry, and a silent block
+        // looks exactly like a quiet market. The holder bar taught that lesson the expensive way on 2026-11-05 - hours
+        // of "no trades" with the only trace on each coin. Said once, in words, with what it costs.
+        if (/could not be verified|unavailable/i.test(riskReason)) {
+          this._riskMisses = (this._riskMisses || 0) + 1;
+          if (this._riskMisses >= 5 && (!this._riskWarnAt || now - this._riskWarnAt > 300000)) {
+            this._riskWarnAt = now;
+            this._log('warn', `Live entries are blocked: the on-chain mint check cannot be answered right now (${riskReason}). Practice mode is not affected, and nothing is bought with real money until the node answers.`);
+          }
+        } else this._riskMisses = 0;
+        return;
+      }
+      this._riskMisses = 0;
+      if (!this.running || this.s.mode !== 'live' || this.positions.has(t.mint) || this.positions.size >= this.s.maxPositions
+        || this._freeSol() < this._cashNeeded() || Date.now() < this.pausedUntil) return;
+    }
     t.status = 'bought';
+    this._recordTick(t, true);
     const t0 = Date.now();
     const feeBuy = this._feeFor(false);
     const paper = s.mode !== 'live';
-    // The slot is reserved BEFORE any network wait: the entry is priced at the pool and refused when the board behind
-    // the decision is behind a fall (see `_entryPrice`), and a second coin that passes while this one is still pricing
-    // has to see this position already taking one of the allowed slots. The order build starts at the same moment as
-    // the price read and waits behind a gate: nothing is broadcast, and nothing is counted against the rate cap, on a
-    // refusal. The two waits overlap instead of adding up, which is one network round trip saved on every entry.
     const p = {
       mint: t.mint, symbol: t.symbol, name: t.name, entryMc: Number(t.mc) || 0, mc: Number(t.mc) || 0, peakMc: Number(t.mc) || 0,
       solIn: sol, feeBuy, feeExitEst: this._feeFor(true), openedAt: now, status: 'confirming', closing: false, paper, fails: 0, nextTry: 0, pending: !paper,
@@ -2030,12 +1703,15 @@ class Engine extends EventEmitter {
       entryBuyers: ev.m ? ev.m.buyers : null,
       // Every tip this position pays is part of what it cost (see `_finishSell`).
       feesPaid: Number(feeBuy) || 0,
+      entryLiquidityUsd: t.ext ? t.ext.liqUsd : null, entryDexId: t.ext ? t.ext.dexId : null,
     };
     this.positions.set(t.mint, p);
     this._persistPositions();
-    const pxP = this._entryPrice(t);
+    const pxP = this._entryPrice(t).catch(() => ({ refuse: 'Entry price unavailable' }));
     let first = null;
     if (!paper) {
+      p.spendNoted = true;
+      p.spendEntry = this._noteSpend(sol + feeBuy + TOKEN_RENT_SOL);
       const slip = this._slippageFor(t.mint, false);
       const gate = pxP.then((px) => { if (px.refuse) { const e = new Error('Refused by the entry price gate'); e.aborted = true; throw e; } });
       first = this._tradeLive('buy', t.mint, sol, { slippage: slip, fee: feeBuy, pool: t.graduated ? 'auto' : 'pump', gate })
@@ -2044,6 +1720,7 @@ class Engine extends EventEmitter {
     const px = await pxP;
     if (px.refuse) {
       this.positions.delete(t.mint);
+      this._releaseSpend(p.spendEntry);
       this._persistPositions();
       t.status = 'watching';
       t.reason = px.refuse;
@@ -2055,9 +1732,6 @@ class Engine extends EventEmitter {
     p.peakMc = px.mc;
     // The slot is a position now: the pool quoted a price and the order is going out (or the paper fill is booked).
     p.priced = true;
-    // The entry price is a real reading of the pool, so the position starts with a fresh price clock: without this the
-    // watchdog that sells an unpriceable coin would see a brand-new position as one nobody has ever priced. `pxSeed`
-    // marks the price as the entry's own reading, so the first live print is taken as it comes (see `_pricePosition`).
     p.pxAt = Date.now();
     p.pxSeed = true;
     p.pxSource = px.src === 'curve' ? 'curve' : 'entry';
@@ -2067,24 +1741,22 @@ class Engine extends EventEmitter {
     // the next scheduled sync runs: every exit rule is measured on that number.
     if (!paper && this._feedLabel === 'pumpdev') this._syncSubscriptions();
     this._log('buy', `Buying ${t.symbol} (${t.mint.slice(0, 4)}) for ${sol} SOL (${ev.m.buyers} buyers, mc ${Math.round(px.mc)}`
-      // The score is a gate only on the full desk. Printed in the simple plan it reads as a bug - a coin bought at
-      // "score 35" beside a 68 floor - so the simple plan names itself there instead, and the market cap that it DOES
-      // gate on takes the place of honour.
       + `${s.simpleMode ? ', simple plan' : `, score ${ev.score}`}`
       // A board price is the risky one: it is somebody else's row, and the pool is the market. Naming it costs one
       // word and answers "why did it stop out at once" without anybody having to read the log of a coin that is gone.
       + `${px.src === 'board' ? `, board price (${px.why || 'no pool'})` : ''})`);
     try {
       if (paper) {
-        p.entryMc = px.mc * (1 + PAPER_SLIP);
-        this.paper.balance -= sol * (1 + FEE) + feeBuy;
+        await this._paperWait();
+        p.entryMc = (Number(t.mc) || px.mc) * (1 + this._paperSlippage(t, sol));
+        const debit = sol * (1 + FEE) + feeBuy;
+        if (!this.running || this.s.mode !== 'paper' || this.paper.balance < debit) {
+          throw Object.assign(new Error('Practice entry cancelled before fill'), { phase: 'build', definite: true });
+        }
+        this.paper.balance -= debit;
         p.status = 'open';
         p.pending = false;
       } else {
-        // One order, then at most one more when the chain refused the price rather than the market. A rejected
-        // transaction is free of tokens and costs only the fee, so trying again wider is safe and it is the
-        // difference between missing a runner and catching it. The retry also re-routes: if the curve has moved to
-        // PumpSwap the coin is marked graduated and the second attempt goes to the right market.
         const place = (slippage, via) => (via === 'backup'
           ? this._backupTrade('buy', t.mint, sol, { slippage })
           : this._tradeLive('buy', t.mint, sol, { slippage, fee: feeBuy, pool: t.graduated ? 'auto' : 'pump' }));
@@ -2096,6 +1768,8 @@ class Engine extends EventEmitter {
         };
         const settle = async (r) => {
           p.sig = r.sig;
+          p.confirmingBuy = true;
+          this._persistPositions();
           this.stats.lastLatencyMs = Date.now() - t0;
           if (r.landed) { await this.refreshBalance(); return { state: 'confirmed', err: '' }; }
           // The balance read and the first status poll run at once: neither answer depends on the other, and the
@@ -2116,9 +1790,6 @@ class Engine extends EventEmitter {
           confirmed = await settle(await order(this._slippageFor(t.mint, false)));
         }
         if (confirmed.state === 'failed') {
-          // Measured on chain: 6063 is UnsupportedQuoteMint, a coin whose curve is not quoted in SOL. No tolerance
-          // or route can fill that order, so the coin is retired instead of being paid for again.
-          // 6005 and 6004 mean the curve has moved on; 6002 is a price that ran while the order was in flight.
           const unsupported = /6063|UnsupportedQuoteMint/i.test(confirmed.err);
           const wrongMarket = /6005|6004|BondingCurve|Complete/i.test(confirmed.err);
           const priceRefused = /6002|6003|slippage/i.test(confirmed.err);
@@ -2140,11 +1811,16 @@ class Engine extends EventEmitter {
         }
         // Live from the first byte on the wire: a stop, a target or the time limit must work while the chain is
         // still answering. `pending` is the only thing the confirmation decides.
+        p.confirmingBuy = false;
         p.status = 'open';
         p.openedAt = Date.now();
         if (confirmed.state === 'unknown') {
           const held = await this._tokenBalanceRaw(t.mint).catch(() => null);
-          if (held === 0n) throw new Error('Not confirmed and the wallet holds none of it');
+          if (held == null || held === 0n) {
+            p.pendingBuy = true; p.pending = true; p.status = 'confirming';
+            this._persistPositions();
+            return;
+          }
           p.pending = false;
           this._log('warn', held === null
             ? `The RPC could not confirm the buy of ${t.symbol}. Keeping it on the book and managing it.`
@@ -2161,14 +1837,6 @@ class Engine extends EventEmitter {
         if (this.positions.get(t.mint) === p) {
           const seen = {};
           p.tokIn = await this._tokenBalanceRaw(t.mint, seen).catch(() => null);
-          // RULE ADDED 2026-11-05 (measured on $sol, bought 17:03:55 and booked "Take profit at +301.4%" five
-          // seconds later at -15.0%): when the order filled somewhere other than the pool the entry price was read
-          // from - a re-quote, or the backup route - the filling price is the truth, and the board's number is not.
-          // The tokens the wallet received against the SOL it paid ARE the entry, exactly, with no supply and no
-          // other pool involved. A phantom +301% peak cannot come out of a price the wallet never paid.
-          // Until that answer is in, NO PROFIT RULE MAY FIRE (`entrySettled`): the correction needs one RPC round
-          // trip and a spike can come faster than that - $MGOAT was sold two seconds after the buy. A stop, the
-          // creator selling, the time limit and a lost price all stay armed, because those protect money.
           p.entrySettled = false;
           this._entryFromFill(p, sol, feeBuy, seen.decimals)
             .catch(() => {})
@@ -2178,6 +1846,15 @@ class Engine extends EventEmitter {
     } catch (e) {
       // An exit may have closed this position while the confirmation was still running.
       if (this.positions.get(t.mint) !== p) return;
+      if (e.signature) {
+        p.sig = e.signature;
+        p.pendingBuy = true;
+        p.pending = true;
+        p.status = 'confirming';
+        this._persistPositions();
+        this._log('warn', `Buy of ${t.symbol} was submitted; waiting for its signature before allowing another order.`);
+        return;
+      }
       // A send that timed out may still land, so the wallet gets the last word before the buy is called off.
       const unsure = !paper && !e.definite && e.phase !== 'build';
       const held = unsure ? await this._tokenBalanceRaw(t.mint).catch(() => null) : null;
@@ -2224,40 +1901,29 @@ class Engine extends EventEmitter {
     p.closing = true;
     const s = this.s;
     const t1 = Date.now();
-    // A sale that did not come from a trigger has no "move that fired the rule": a press of Sell, Sell all, or the
-    // price being lost are about the coin *now*. Without this the line read "(Manual sell at +0.0%)" - because a
-    // missing number compares as zero - and an estimate could be booked at the price of a trigger that had already
-    // been abandoned. So the numbers describe this sale, not an older one.
     if (opts.manual || why === 'Price lost' || why === 'Sell all') {
       p.firedAt = Math.round(this._pnlPct(p) * 10) / 10;
       p.mcAtFire = p.mc;
     }
-    const part = Math.max(1, Math.min(100, Number(pct) || 100));
+    const part = Math.max(1, Math.min(100, Number(p.pendingSell ? p.pendingSellPct : pct) || 100));
     const urgent = why !== 'Take profit' && why !== 'Take profit part 1';
     const feeSell = this._feeFor(urgent);
     try {
       if (!p.paper) {
         // No SOL in the wallet means no fee, and no fee means the order is refused before it reaches the chain. It
         // is said once, in plain words with the address to send to, instead of an endless "not confirmed".
-        if (this._balance() < EXIT_FEE_FLOOR_SOL) {
+        if (!p.pendingSell && this._balance() < EXIT_FEE_FLOOR_SOL) {
           this._warnNoFeeSol();
           throw Object.assign(new Error(this._noFeeSentence()), { noFee: true });
         }
-        // A take-profit exit must never be filled below break-even just because the price fell while the order was
-        // built. If the level is gone, the sale is abandoned and the next tick decides - the stop and the trail are
-        // there for that, and selling a winner at a loss is the one thing the owner asked never to see.
-        if (!urgent && this._pnlPct(p) <= 0) {
+        if (!p.pendingSell && !urgent && this._pnlPct(p) <= 0) {
           p.closing = false;
           p.nextTry = Date.now() + 250;
           p.trigger = null;
           this._log('info', `${p.symbol} slipped back to ${this._pnlPct(p).toFixed(1)}% before the order went out. Not selling it at a loss; watching again.`);
           return;
         }
-        // And a risk rule is checked once more against the freshest price, right before the order is signed. A stop
-        // that fired on a dip the coin has already recovered from is not a stop: selling there is how a coin that was
-        // still climbing got closed at a profit with "Stop loss" written on it, and how a trailing stop sold a coin
-        // that had already bounced back above its give-back level. A press of Sell or Sell all is never second-guessed.
-        if (!opts.manual) {
+        if (!opts.manual && !p.pendingSell) {
           const now2 = this._pnlPct(p);
           const peak = this._pnlPct({ ...p, mc: p.peakMc || p.mc });
           // The room the trail gives back has to be asked for from the same rule the sale came from: a fixed 4-5 points
@@ -2281,10 +1947,6 @@ class Engine extends EventEmitter {
                 return;
               }
         }
-        // RULE CHANGED 2026-11-05: a SALE always lets the door find its own pool (`auto`). Guessing `pump` for a coin
-        // the desk never saw graduate made the door answer "could not price this coin yet" for ever, because the coin
-        // was on PumpSwap by then - measured on SAFU: bought at 15:39, unsellable from 16:23, and the only thing that
-        // got it out was the Sell every coin button. A sale has nothing to protect by naming a pool; an entry does.
         const order = (slippage, via) => (via === 'backup'
           ? this._backupTrade('sell', p.mint, null, { slippage, pct: part })
           : this._tradeLive('sell', p.mint, null, { slippage, fee: feeSell, pct: part, pool: 'auto' }));
@@ -2292,9 +1954,11 @@ class Engine extends EventEmitter {
         // exactly what it moved, and that is the only number that cannot be a neighbour's opinion.
         const settle = async (r) => {
           this.stats.lastSellMs = Date.now() - t1;
-          // An exit does not wait ten seconds on an order that never landed: it asks for two and a half seconds, and
-          // an order that has not shown up by then is retried, which on a falling coin is worth far more than
-          // certainty about the first one.
+          if (p.sellSig !== r.sig) { p.sellSubmittedAt = Date.now(); p.sellObservedAt = null; }
+          p.sellSig = r.sig;
+          p.pendingSell = r;
+          p.pendingSellPct = part;
+          this._persistPositions();
           const out = r.landed ? { state: 'confirmed', err: '' } : await this._confirm(r.sig, r.raw, { acceptProcessed: true, polls: 10 });
           if (out.state === 'confirmed' && r.sig) {
             const delta = await this._measureProceeds(r.sig);
@@ -2305,21 +1969,10 @@ class Engine extends EventEmitter {
         let confirmed;
         const pnlNow = this._pnlPct(p);
         const slip = this._slippageFor(p.mint, urgent, pnlNow);
-        if (urgent && part >= 99.5) {
-          // An exit cannot afford to wait for one door: both are asked at once and the first signed transaction wins.
-          // If the second lands too it fails on a balance that is already gone, which costs a fee and never sells
-          // twice. The tolerance is the exit's own (`slip`), which is already the tight 15% while the coin is up and
-          // the wide one when it is under water. Measured before: a refused stop cost 1.2 s of re-quoting while the
-          // coin fell - with both doors in the air a stalled primary does not hold the stop any more.
-          const r = await Promise.any([
-            this._tradeLive('sell', p.mint, null, { slippage: slip, fee: feeSell, pct: part, pool: 'auto' }),
-            this._backupTrade('sell', p.mint, null, { slippage: slip, pct: part }),
-          ]);
-          confirmed = await settle(r);
-        } else {
-          confirmed = await settle(await order(slip));
-        }
+        confirmed = await settle(p.pendingSell || await order(slip));
         if (confirmed.state === 'failed') {
+          p.pendingSell = null;
+          this._persistPositions();
           const wrongMarket = /6005|6004|BondingCurve|Complete/i.test(confirmed.err);
           const priceRefused = /6002|6003|6063|slippage/i.test(confirmed.err);
           // A coin can finish its curve while it is being held, and then the curve can no longer sell it. The
@@ -2327,11 +1980,6 @@ class Engine extends EventEmitter {
           if (wrongMarket) { p.graduated = true; const tok = this.tokens.get(p.mint); if (tok) tok.graduated = true; }
           if (wrongMarket || priceRefused) {
             this._log('info', `${p.symbol} moved while the sell was in flight. Re-quoting.`);
-            // A TAKE PROFIT NEVER CHASES A FALLING PRICE. The re-quote is worth it for a stop - any price beats no
-            // sale - but for a profit rule it is how a winner is sold into a hole: the target was +70%, the first
-            // order is refused because the pool dropped, the second is priced where the coin is now, and the row
-            // reads "Take profit · -89.2%" with the coin back at its old price two seconds later. If the move that
-            // fired the rule is gone, the sale is abandoned and the stop and the trail decide from here.
             if (!urgent) {
               const now3 = this._pnlPct(p);
               if (now3 < Math.min(s.takeProfitPct, Number(p.firedAt) || 0)) {
@@ -2350,14 +1998,14 @@ class Engine extends EventEmitter {
           }
         }
         if (confirmed.state === 'failed') {
+          p.pendingSell = null;
+          this._persistPositions();
           throw Object.assign(new Error(this._whyRejected(confirmed.err)), { phase: 'rejected' });
         }
         if (confirmed.state === 'unknown') throw new Error('Sell not confirmed by the RPC');
+        if (!p.sellObservedAt) p.sellObservedAt = Date.now();
         this.refreshBalance();
       }
-      // What actually left the wallet decides what the book records. A route that sells a different amount than it
-      // was asked for (a partial fill, a percentage resolved against a smaller balance) must not close a position
-      // that still holds tokens, and must not book a size it never sold.
       let soldPct = p.paper ? part : await this._measuredPct(p, part);
       if (!p.paper && soldPct != null && soldPct < 0.5) {
         // A node that is a block behind still reports the tokens it just saw sold, so the reading is taken again a
@@ -2367,10 +2015,17 @@ class Engine extends EventEmitter {
       }
       if (!p.paper && soldPct == null) throw new Error('The sale could not be measured against the wallet balance');
       if (soldPct < 0.5) throw new Error('The sale went through but the wallet still holds the tokens');
+      if (p.paper) await this._paperWait();
       this._finishSell(p, why, feeSell, soldPct);
     } catch (e) {
       // A sell that landed after the timeout leaves nothing to sell: detect it instead of retrying forever.
       if (!p.paper) {
+        if (e.signature) {
+          p.sellSig = e.signature;
+          p.pendingSellPct = part;
+          p.pendingSell = { sig: e.signature, raw: e.raw || null };
+          this._persistPositions();
+        }
         try {
           const held = await this._tokenBalanceRaw(p.mint);
           if (held === 0n) {
@@ -2402,13 +2057,7 @@ class Engine extends EventEmitter {
       };
       p.closing = false;
       p.fails++;
-      // A refused order that was sent still paid its tip, and that tip is part of what this position cost. Counting it
-      // is what keeps the booked percentage readable (see `_finishSell`): without it a 0.001 SOL ticket that paid three
-      // tips was reported as **-174.9%**, a number that means nothing to a trader.
-      p.feesPaid = (Number(p.feesPaid) || 0) + (Number(this.s.priorityFeeSol) || 0);
-      // An exit never waits long: a refused order costs one fee, while a position that could not be closed for
-      // minutes is the whole risk of the desk. The first retry is a blink - a refused stop on a falling coin is worth
-      // re-sending at once - and only a repeated refusal is given a longer rest.
+      if (e.phase === 'rejected') p.feesPaid = (Number(p.feesPaid) || 0) + (Number(this.s.priorityFeeSol) || 0);
       p.nextTry = Date.now() + (p.fails === 1 ? 300 : Math.min(6000, 900 * p.fails));
       if (e.noFee) {
         // The automatic exits keep trying quietly; a press of Sell must answer, or the button looks broken.
@@ -2416,12 +2065,6 @@ class Engine extends EventEmitter {
         return;
       }
       const reason = real(e);
-      // RULE ADDED 2026-11-05 (measured on SAFU): a coin whose pool has been emptied cannot be sold by anyone, and
-      // retrying it every second produced an error line for twenty minutes and nothing else.
-      // RULE CORRECTED the same day (measured on lambo): a FRESH pump.fun coin has no liquidity figure at all, because
-      // its "pool" is the bonding curve - so the first version of this rule declared a live coin dead and left it alone
-      // for ten minutes sixteen seconds after buying it. Death is only ever declared for a GRADUATED pool that reports
-      // zero depth, after three refusals, and never in the first minute and a half of a position's life.
       const tok = this.tokens.get(p.mint);
       const ext = tok && tok.ext && Date.now() - (tok.ext.at || 0) < 60000 ? tok.ext : null;
       const dexId = ext ? String(ext.dexId || '') : '';
@@ -2473,25 +2116,17 @@ class Engine extends EventEmitter {
     return Math.round(sold * 1000) / 10;
   }
 
-  /**
-   * The SOL a given transaction moved for this wallet, read from the transaction itself. Reading the wallet balance
-   * twice was wrong: two RPC nodes can be at different blocks, so the difference carried the previous trade and a real
-   * profit was reported as a loss of the whole ticket.
-   */
   async _txSolDelta(sig) {
     const kp = this.wallet.keypair;
     if (!kp || !sig) return null;
     const mine = kp.publicKey.toBase58();
     // An exit is confirmed at `processed`, which is often a moment before the transaction is readable at `confirmed`,
     // so the same lookup is tried twice at the looser level rather than falling back to an estimate.
-    for (const commitment of ['processed', 'confirmed']) {
+    for (const commitment of ['confirmed', 'finalized']) {
       const tx = await this.rpcCall((c) => c.getTransaction(sig, { maxSupportedTransactionVersion: 0, commitment }), { attempts: 3, budgetMs: 8000 }).catch(() => null);
       const msg = tx && tx.transaction && tx.transaction.message;
-      // A versioned transaction names its keys `staticAccountKeys`, a legacy one names them `accountKeys`. Reading
-      // only the versioned name silently returned "no idea" for every legacy sale, and "no idea" books an estimate:
-      // measured on 2026-11-05, the LIBRE sale booked +0.0044 SOL where the wallet really gained +0.0146 SOL.
       const keys = msg && (msg.staticAccountKeys || msg.accountKeys);
-      if (!keys || !tx.meta) continue;
+      if (!keys || !tx.meta || tx.meta.err) continue;
       const i = keys.findIndex((k) => (k && typeof k.equals === 'function' ? k.equals(kp.publicKey) : String(k) === mine));
       if (i < 0) continue;
       const delta = (Number(tx.meta.postBalances[i]) - Number(tx.meta.preBalances[i])) / 1e9;
@@ -2517,17 +2152,9 @@ class Engine extends EventEmitter {
     return null;
   }
 
-  /** The entry price the wallet actually paid, from the tokens it received. Only used when the reading the desk
-   *  bought on was not the pool's own number (a re-quote, the backup route, a board row), and only when the answer is
-   *  in the same world as the market: a pump.fun launch has a supply of one billion tokens, so the price the wallet
-   *  paid times a billion is the market cap every later reading is quoted in. A ratio that disagrees by more than
-   *  three times is not a price, it is a different token - the board's number is kept and nothing is invented. */
   async _entryFromFill(p, sol, feeBuy, decimals) {
     if (!(p.tokIn > 0n) || decimals == null || !(p.entryMc > 0)) return;
     if (this.positions.get(p.mint) !== p) return;          // closed while the balance was being read
-    // Every pump.fun launch is one billion tokens, and that is the only supply this arithmetic may assume. A mint
-    // that does not look like one keeps the price it was bought on, because a different supply would turn the answer
-    // into a number that is wrong by that factor.
     const tok = this.tokens.get(p.mint);
     const pumpStyle = /pump$/i.test(p.mint) || (tok && (tok.graduated || (tok.ext && ['pumpfun', 'pumpswap', 'pump-amm'].includes(tok.ext.dexId))));
     if (!pumpStyle) return;
@@ -2571,11 +2198,11 @@ class Engine extends EventEmitter {
       const book = this.books[row.paper ? 'paper' : 'live'];
       const wasWin = row.pnlSol >= 0;
       row.pnlSol = pnl;
-      row.pnlPct = (pnl / Math.max(1e-9, item.soldSol)) * 100;
+      row.pnlPct = (pnl / Math.max(1e-9, row.basisSol || item.soldSol)) * 100;
       row.measured = true;
       book.pnl += delta;
       book.sessionPnl += delta;
-      if (wasWin !== pnl >= 0) {
+      if (wasWin !== (pnl >= 0)) {
         if (pnl >= 0) { book.wins++; book.losses = Math.max(0, book.losses - 1); }
         else { book.losses++; book.wins = Math.max(0, book.wins - 1); }
       }
@@ -2596,9 +2223,9 @@ class Engine extends EventEmitter {
     let pnlSol;
     const measured = !p.paper && p.proceeds != null && part === 1;
     if (p.paper) {
-      const exitMc = p.mc * (1 - PAPER_SLIP);
+      const exitMc = p.mc * (1 - this._paperSlippage(this.tokens.get(p.mint), soldSol * p.mc / p.entryMc));
       const proceeds = soldSol * (exitMc / p.entryMc) * (1 - FEE);
-      this.paper.balance += proceeds;
+      this.paper.balance += proceeds - feeSell;
       pnlSol = proceeds - soldSol * (1 + FEE) - p.feeBuy * part - feeSell;
     } else if (measured) {
       // What the wallet actually gained, minus what was put in and the entry costs, minus any rent the same
@@ -2610,21 +2237,16 @@ class Engine extends EventEmitter {
       pnlSol = soldSol * (exitMc / p.entryMc) * (1 - FEE) - soldSol * (1 + FEE) - p.feeBuy * part - feeSell;
     }
     p.proceeds = null;
-    // RULE CHANGED 2026-11-05 (measured on $WIMPOSTER, booked at **-174.9%**): the percentage is the share of the money
-    // this position actually put at risk - its ticket PLUS every tip it paid, including the tips of refused orders that
-    // were retried. Dividing by the ticket alone could print less than -100%, which is not a number a trader can read.
-    // The exit ladder still judges levels on the ticket (that is what the plan was written against); the row answers
-    // the other question: how much of what I put in did I lose.
-    const basisSol = soldSol + Math.max(0, Number(p.feesPaid) || 0) + Math.max(0, Number(feeSell) || 0);
+    p.pendingSell = null;
+    const basisSol = p.paper ? soldSol * (1 + FEE) + p.feeBuy * part : soldSol + Math.max(0, Number(p.feesPaid) || 0) + Math.max(0, Number(feeSell) || 0);
     const pnlPct = (pnlSol / Math.max(1e-9, basisSol)) * 100;
     const book = this.books[p.paper ? 'paper' : 'live'];
     book.pnl += pnlSol;
     book.sessionPnl += pnlSol;
     const row = {
-      ts: Date.now(), symbol: p.symbol, mint: p.mint, solIn: soldSol, pnlSol, pnlPct, reason: why, paper: p.paper,
-      // What the trade actually was, so the row can be read without the log: how long it was held, the move that fired
-      // the rule, and the best it was ever worth. A closed trade that "peaked at +41%" and filled at +8% is an exit
-      // that was too early, and that is a fact the desk has to keep, not a number that disappears with the position.
+      ts: Date.now(), symbol: p.symbol, mint: p.mint, solIn: soldSol, basisSol, pnlSol, pnlPct, reason: why, paper: p.paper,
+      measured: p.paper || measured, signature: p.sellSig || null, buySignature: p.sig || null,
+      sellObservationMs: p.sellObservedAt && p.sellSubmittedAt ? Math.max(0, p.sellObservedAt - p.sellSubmittedAt) : null,
       heldSec: p.openedAt ? Math.round((Date.now() - p.openedAt) / 1000) : null,
       firedPct: p.firedAt == null ? null : Number(p.firedAt),
       peakPct: p.peakPct == null ? null : Math.round(Number(p.peakPct) * 10) / 10,
@@ -2636,13 +2258,9 @@ class Engine extends EventEmitter {
     };
     this.history.unshift(row);
     if (this.history.length > 100) this.history.pop();
-    // RULE ADDED 2026-11-05: an estimate is not the end of the story. When the node would not hand over the sale's own
-    // transaction, the row is booked from the rule's price - honest, but not the money - so it is queued and measured
-    // again in the background for a few minutes, and corrected when the chain finally answers. Measured live: three
-    // sales in a row booked estimates in one afternoon of public-node 429s.
-    if (!p.paper && part === 1 && !measured && p.sig) {
+    if (!p.paper && part === 1 && !measured && p.sellSig) {
       (this._remeasure || (this._remeasure = [])).push({
-        sig: p.sig, row, soldSol, feeBuy: p.feeBuy, rentBack: p.rentBack || 0,
+        sig: p.sellSig, row, soldSol, feeBuy: p.feeBuy, rentBack: p.rentBack || 0,
         tries: 0, nextAt: Date.now() + 20000,
       });
     }
@@ -2657,9 +2275,6 @@ class Engine extends EventEmitter {
     // and a line that names only the symbol cannot be read afterwards - not by the owner and not by me.
     const tag = `${p.symbol} (${p.mint.slice(0, 4)})`;
     const basis = p.paper ? '' : measured ? ' (paid by the chain)' : ' (estimated)';
-    // Why a stop can fire 30% under its own level is a question about two numbers, not about the rule: the market cap the
-    // position was entered at and the one it is priced at now. Measured in a paper run on the shipped plan, four stops
-    // inside one minute fired between -31% and -79%, and the line said nothing about which side moved.
     const mcNote = p.entryMc > 0 && p.mc > 0 && Math.abs(firedAt) > (Number(this.s.stopLossPct) || 0)
       ? ` [mc ${Math.round(p.entryMc)} → ${Math.round(p.mc)}]` : '';
     this._log(pnlSol >= 0 ? 'ok' : 'sell', `Sold ${part < 1 ? Math.round(part * 100) + '% of ' : ''}${tag}${atNote}: ${pnlSol >= 0 ? '+' : ''}${pnlSol.toFixed(4)} SOL${basis}${p.pxSource ? ` [${p.pxSource}]` : ''}${mcNote}`);
@@ -2682,9 +2297,6 @@ class Engine extends EventEmitter {
     this.positions.delete(p.mint);
     this._persistPositions();
     book.trades++;
-    // The coin goes back on the market board as a watched coin, not as "Bought" for ever: the status was never reset,
-    // so a coin that had been bought once could never be judged again (and the table kept saying it was held) even
-    // after its cooldown had passed.
     const tok = this.tokens.get(p.mint);
     if (tok && tok.status === 'bought') { tok.status = 'watching'; tok.reason = 'Sold, waiting for the cooldown'; }
     // A coin that just closed is left alone for a while. Without this the desk bought the same falling coin three
@@ -2728,6 +2340,8 @@ class Engine extends EventEmitter {
       .map((h) => ({
         ts: num(h.ts), symbol: String(h.symbol).slice(0, 12), mint: String(h.mint), solIn: num(h.solIn),
         pnlSol: num(h.pnlSol), pnlPct: num(h.pnlPct), reason: String(h.reason || 'Sold'), paper: Boolean(h.paper),
+        buySignature: h.buySignature || null, sellObservationMs: h.sellObservationMs == null ? null : num(h.sellObservationMs),
+        measured: Boolean(h.measured), signature: h.signature || null, basisSol: num(h.basisSol),
         heldSec: h.heldSec == null ? null : num(h.heldSec),
         firedPct: h.firedPct == null ? null : num(h.firedPct),
         peakPct: h.peakPct == null ? null : num(h.peakPct),
@@ -2824,9 +2438,6 @@ class Engine extends EventEmitter {
     const usd = price ? Number(acct.uiAmount) * price.priceUsd : null;
     const rentSol = acct.lamports / 1e9;
     const rentUsd = rentSol * (this.market.solPrice() || 0);
-    // Burn only when the trade destroys less than it frees. A token no price service knows AND that neither door
-    // could sell is worth nothing measurable - that is exactly the case whose rent would otherwise stay locked for
-    // ever, so it is treated as worthless. A priced holding is left alone when it is worth more than half its rent.
     if (usd != null && (!(rentUsd > 0) || usd > rentUsd * 0.5)) return false;
     const kp = this._requireWallet();
     const burn = reclaim.makeBurner((fn, opts) => this.rpcCall(fn, opts), kp);
@@ -2873,15 +2484,27 @@ class Engine extends EventEmitter {
     const s = this.s;
     this._seq = (this._seq || 0) + 1;
     for (const p of this.positions.values()) {
+      if (p.pendingBuy) {
+        if (!p.checkingBuy && now >= (p.nextBuyCheck || 0)) {
+          p.checkingBuy = true;
+          p.nextBuyCheck = now + 3000;
+          this._confirm(p.sig, null, { polls: 2 }).then(async (result) => {
+            if (result.state === 'failed') {
+              this.positions.delete(p.mint); this._releaseSpend(p.spendEntry);
+            } else if (result.state === 'confirmed') {
+              p.pendingBuy = false; p.pending = false; p.status = 'open';
+              p.tokIn = await this._tokenBalanceRaw(p.mint).catch(() => null);
+            }
+            this._persistPositions();
+          }).catch((e) => this._log('warn', e.message)).finally(() => { p.checkingBuy = false; });
+        }
+        continue;
+      }
       if (p.status !== 'open' || p.closing) continue;
+      if (p.pendingSell) { this._sell(p, 'Pending sale confirmation', 100, { manual: true }).catch((e) => this._log('warn', e.message)); continue; }
       const t = this.tokens.get(p.mint);
-      // A coin the desk cannot price is a coin it cannot protect. The last number a feed gave is not what the coin is
-      // worth now, and every rule - the stop included - would be reading a ghost. Measured live on 2026-11-05: a coin
-      // that went from a 50k market cap to nothing kept printing +71% for eight minutes, and only a hand on the Sell
-      // button ended it. The price feed gets PX_DEAD_MS to answer (the poll asks for that mint directly after that),
-      // and after PX_LOST_MS the position is closed: any price beats no price. A position restored from disk gets
-      // three times as long, because a session that has just started has not had its first answer yet and selling it
-      // blind would be the desk panicking rather than protecting.
+      const flowExit = adaptiveExit(p, t, s, now);
+      if (flowExit) { this._sell(p, flowExit, 100); continue; }
       const lastPx = p.pxAt || p.bookedAt || p.openedAt || now;
       const blindFor = p.pxAt ? PX_LOST_MS : PX_LOST_MS * 3;
       if (now - lastPx > blindFor) {
@@ -2893,40 +2516,23 @@ class Engine extends EventEmitter {
       const pnl = this._pnlPct(p);
       const peak = this._pnlPct({ ...p, mc: p.peakMc || p.mc });
       let why = null;
-      // The RULE and the label are two different things. The label carries the number that made it interesting ("peaked
-      // at +12.8%"), and that number moves - so keying the trigger on the label made a trailing stop start its wait
-      // again on every tick where the peak changed, and it never fired at its give-back at all. Measured in a paper
-      // run: a coin that peaked at +12.8% was sold by the trailing stop at -5.3%.
       let rule = null;
       let pct = 100;
-      // Order matters for the label the player reads, and the sale is the same whichever rule matched. A stop that
-      // is blown through in one tick is still a stop, so the loss limit is checked before the rules that protect a
-      // profit: a coin that gapped from +12% to -31% must not be reported as "break even".
       if (t && t.devSold) { rule = 'Creator sold'; why = rule; }
       else if (pnl >= s.takeProfitPct && p.entrySettled !== false) { rule = 'Take profit'; why = rule; }
       // Simple settings closes only on the target, the stop and the time limit: the first rung, the trail and the
       // break even are advanced rules, and while the simple mode is on they are off by definition.
       else if (!s.simpleMode && s.tp1Pct > 0 && !p.tp1Done && pnl >= s.tp1Pct && p.entrySettled !== false) { rule = 'Take profit part 1'; why = rule; pct = clamp(s.tp1SellPct, 10, 90); }
       else if (pnl <= -s.stopLossPct) { rule = 'Stop loss'; why = rule; }
-      // The simple plan has no trail, and a coin that peaks at +61% and then falls to nothing is the whole session's
-      // loss: measured live on $MOSQUE, a position that had been up +61.3% was booked at -89.2% and the coin was back
-      // up two seconds later. ONE protective rule stays in the simple mode, because it is not an advanced setting -
-      // it is the difference between a win and a wipeout. Once a coin has been up SIMPLE_RUN_ARM, half of that peak is
-      // kept: a +61% run closes at about +30% instead of giving all of it back.
       else if (s.simpleMode && p.entrySettled !== false && peak >= SIMPLE_RUN_ARM && pnl <= peak / 2) { rule = 'Peak give-back'; why = `${rule} (peaked at +${peak.toFixed(1)}%)`; }
       // After the first rung has been banked the rest is a runner, and a runner is given less room: the whole point of
       // taking the first bite is that the remainder can be sold at the top instead of giving the move back.
-      else if (!s.simpleMode && p.entrySettled !== false && peak >= s.trailArmPct && pnl <= peak - this._trailGive(peak)) { rule = 'Trailing stop'; why = `${rule} (peaked at +${peak.toFixed(1)}%)`; }
+      else if (!s.simpleMode && p.entrySettled !== false && s.trailArmPct > 0 && s.trailGivePct > 0 && peak >= s.trailArmPct && pnl <= peak - this._trailGive(peak)) { rule = 'Trailing stop'; why = `${rule} (peaked at +${peak.toFixed(1)}%)`; }
       // A coin that has already shown a real gain is not allowed to become a loss: most of the losing trades in
       // this market are winners that were given back, and the fees make a round trip to zero worse than nothing.
       else if (!s.simpleMode && p.entrySettled !== false && s.breakEvenPct > 0 && peak >= s.breakEvenPct && pnl <= 0) { rule = 'Break even'; why = rule; }
       else if ((now - p.openedAt) / 1000 >= s.maxHoldSec) { rule = 'Time limit'; why = rule; }
       if (!why) { p.trigger = null; continue; }
-      // The creator selling and the time limit are not price thresholds and act at once. Everything else is a level
-      // that has to HOLD: it must be seen again after `triggerHoldMs`, on a fresh reading, before the bot sells. A
-      // spike that is gone in one tick is not a signal, and selling into it is how a +135% print filled at -3%.
-      // A RISK rule is the exception, and it is timed by `_riskHoldMs`: a profit target waits for a spike to prove
-      // itself, while a stop or a trail is watching money leave, and 400 ms of it is a fifth of the move.
       if (rule === 'Creator sold' || rule === 'Time limit') { this._sell(p, why, pct); continue; }
       const seen = p.trigger;
       if (!seen || seen.rule !== rule || now - seen.at > 3000) { p.trigger = { rule, at: now, pxAt: p.pxAt || 0, seq: this._seq }; continue; }
@@ -2959,6 +2565,7 @@ class Engine extends EventEmitter {
   _feeFor(urgent) {
     const s = this.s;
     const cap = s.priorityFeeSol;
+    if (s.mode === 'paper') return cap + networkExtras(s);
     if (!s.smartFees || s.mode !== 'live' || this._feeSol == null) return cap;
     const v = this._feeSol * (urgent ? 2 : 1);
     return Math.max(Math.min(FEE_FLOOR_SOL, cap), Math.min(cap, v));
@@ -2985,15 +2592,8 @@ class Engine extends EventEmitter {
     // re-quoting while the coin keeps falling. So an urgent exit is never tighter than EXIT_SLIP_MIN.
     if (urgent) {
       const base = Math.min(EXIT_SLIP_MAX, Math.max(cap, EXIT_SLIP_MIN));
-      // Any exit that is still in profit gets the tight tolerance, whatever its trigger was called. A stop needs room to
-      // fill because any price beats no sale; a profit does not - a 40% tolerance on a coin that is +8% is an
-      // instruction that may fill at -32%, which is exactly the "it was up and it sold me a loss" report.
       return inProfit ? Math.min(base, SPIKE_SLIP) : base;
     }
-    // A TAKE PROFIT IS AN EXIT TOO, and the user's slippage is an ENTRY ceiling. With a 1% setting every take profit
-    // was refused the moment the pool moved ("the price moved before the order landed"), the retry was priced where
-    // the coin was by then, and a +70% winner was booked at -89% - the coin was back up two seconds later. A profit
-    // exit therefore never asks for less room than SPIKE_SLIP, and still never more than the exit ceiling.
     const floor = inProfit ? Math.min(SPIKE_SLIP, EXIT_SLIP_MAX) : 0;
     if (!s.smartFees) return Math.max(cap, floor);
     const t = this.tokens.get(mint);
@@ -3003,19 +2603,15 @@ class Engine extends EventEmitter {
   }
 
   _guardTx(tx, amountSol) {
-    // Refuse transactions that move far more SOL out through plain transfers than this trade is supposed to spend.
-    // The allowance has to cover the ticket itself: a route that funds a wrapped SOL account sends exactly the
-    // ticket through a system transfer, and a guard that refused that would block the buy it is protecting.
-    // `lamportsOut` refuses a message whose program ids sit in an address lookup table, so nothing is invisible.
-    const { instructions } = readTx(tx);
+    const { payer, signers, instructions } = readTx(tx);
+    const walletOwner = this.wallet.address();
+    if (payer !== walletOwner || signers.length !== 1 || signers[0] !== walletOwner) throw new Error('Safety check: unexpected payer or signer.');
+    assertFeeBudget(instructions, Math.max(0.000005, Number(this.s.priorityFeeSol) || 0) + 0.000005);
+    assertSystemInstructions(instructions);
     const total = lamportsOut(instructions);
     const ticket = typeof amountSol === 'number' && amountSol > 0 ? amountSol : 0;
     const allowed = BigInt(Math.round((TX_GUARD_MAX_SOL + ticket * 1.1) * 1e9));
     if (total > allowed) throw new Error('Safety check blocked a suspicious transaction.');
-    // The same two rules the backup route gets, and for the same reason: a swap never needs to hand a token
-    // authority to anybody, and it never needs to close one of our accounts with the rent going somewhere else. The
-    // README has promised this for every trade transaction since the first release; only the backup route enforced
-    // it, so a hostile answer from the primary API could have asked for an approval and been signed.
     const owner = this.wallet.address();
     for (const ix of instructions) {
       if (ix.program !== TOKEN_PROGRAM && ix.program !== TOKEN_2022_PROGRAM) continue;
@@ -3023,22 +2619,13 @@ class Engine extends EventEmitter {
       const tag = ix.data[0];
       if (tag === TOKEN_IX_APPROVE || tag === TOKEN_IX_APPROVE_CHECKED) throw new Error('Safety check blocked a transaction that asks for a token approval.');
       if (tag === TOKEN_IX_SET_AUTHORITY) throw new Error('Safety check blocked a transaction that changes a token authority.');
+      if (tag === 8 || tag === 15) throw new Error('Safety check blocked a trade that burns tokens.');
       if (tag === TOKEN_IX_CLOSE_ACCOUNT && owner && ix.keys[1] !== owner) {
         throw new Error('Safety check blocked a transaction that closes an account with the rent going elsewhere.');
       }
     }
   }
 
-  /**
-   * Send signed bytes to several nodes at once and take the first signature that comes back. A transaction only
-   * lands when it reaches a leader, so the same bytes go out on parallel doors: the first sender that answers wins
-   * and the rest are left to fail quietly. The bytes are identical, so a second node accepting them cannot make a
-   * second trade.
-   *
-   * With Jito switched on the same transaction is also offered to the block engine as a bundle with a tip, started
-   * before the RPC doors so both are in the air at once. The bundle either lands whole - trade and tip together - or
-   * not at all, so the tip costs nothing when it loses; the RPC send is never given up in exchange for it.
-   */
   async _broadcast(raw) {
     const lane = this._jitoLane(raw).catch(() => false);
     const sig = this.rpc.broadcast ? await this.rpc.broadcast(raw) : await this.rpcCall((c) => c.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 }), BROADCAST);
@@ -3079,10 +2666,6 @@ class Engine extends EventEmitter {
       // The client's own sentence already starts with "Jito", so the line must not repeat it: "Jito: Jito refused the
       // request (HTTP 400)" is a stutter on the screen.
       const say = /^jito\b/i.test(why) ? why : `Jito: ${why}`;
-      // "Already processed" is not a fault and not Jito's problem: it means this very transaction is on chain, so a
-      // bundle had nothing left to do. Reported as a warning it taught the keeper to ignore warnings, and the order
-      // itself is fine - the normal route has it. Said once per ten minutes, because the trade path offers every order
-      // to both doors at once and the RPC usually wins that race.
       if (/already processed|already been processed/i.test(why)) {
         if (!this._jitoDupAt || Date.now() - this._jitoDupAt > 600000) {
           this._jitoDupAt = Date.now();
@@ -3112,9 +2695,6 @@ class Engine extends EventEmitter {
       slippage: opt.slippage != null ? opt.slippage : s.slippagePct,
       priorityFee: opt.fee != null ? opt.fee : s.priorityFeeSol, pool: opt.pool || 'auto',
     };
-    // An error from this half of the route means nothing was signed, so trying the other door is safe. An error
-    // after the send is a different animal: the transaction may already be on chain, and a second order would buy
-    // the same coin twice with real money.
     const buildFail = (message) => Object.assign(new Error(message), { phase: 'build' });
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 5000);
@@ -3125,10 +2705,6 @@ class Engine extends EventEmitter {
       throw buildFail(e.name === 'AbortError' ? 'Trade API timed out' : 'Trade API unreachable: ' + e.message);
     } finally { clearTimeout(timer); }
     if (!r.ok) {
-      // The door answers a 400 with a sentence of its own, and it puts it in the STATUS LINE, not in the body: measured
-      // on 2026-11-05, `HTTP/1.1 400 Pool account not found` with the body reading only `Bad Request`. Reading the
-      // body alone turned a coin whose pool is gone into "could not price this coin yet" - a sentence that says
-      // nothing and could never be acted on. Both are read now, the status line first.
       const status = String(r.statusText || '').trim();
       const body = (await r.text().catch(() => '')).slice(0, 120);
       const why = status && status !== 'Bad Request' ? status : body;
@@ -3146,19 +2722,15 @@ class Engine extends EventEmitter {
     this._guardTx(tx, denomSol ? amount : null);
     tx.sign([kp]);
     const raw = tx.serialize();
-    // An entry starts its build while the pool price is still being read, so the two waits overlap. The gate is the
-    // price verdict: a coin the desk refuses is discarded here, signed but never broadcast - the wire is the only
-    // place money can leave.
     if (opt && opt.gate) await opt.gate;
-    const sig = await this._broadcast(raw);
+    let sig;
+    try { sig = await this._broadcast(raw); } catch (err) {
+      err.phase = 'submitted'; err.signature = require('bs58').encode(tx.signatures[0]); err.raw = raw;
+      throw err;
+    }
     return { sig, raw };
   }
 
-  /**
-   * Execute a live trade. The backup route is used only when the primary one provably did not fill the order: a
-   * failure before anything was signed, or a transaction the chain itself rejected (which by definition bought
-   * nothing). A send whose outcome is unknown never falls back, because that could buy the same coin twice.
-   */
   async _tradeLive(action, mint, solAmount, opt) {
     const tip = Number(this.s.priorityFeeSol) || 0;
     try {
@@ -3174,13 +2746,12 @@ class Engine extends EventEmitter {
         this.stats.orderFails = (this.stats.orderFails || 0) + 1;
       }
       this._log('info', `The first route did not fill (${this._whyRejected(e.message)}). Trying the backup route.`);
+      if (opt && opt.gate) await opt.gate;
       try {
         const sig = await this._jupiterSwap(action, mint, solAmount, opt);
-        // No tip is counted here: the backup route pays no priority fee of ours, it takes its cut inside the swap
-        // itself, and that shows up in the fill the wallet reports. Counting a tip that never left the wallet is how
-        // the fee line became a number nobody could reconcile.
         return { sig, raw: null, landed: true };
       } catch (jupErr) {
+        if (jupErr.phase !== 'build' && !jupErr.definite) throw jupErr;
         // Neither door filled the order, so the caller still knows nothing was signed and may retry safely.
         throw Object.assign(new Error(`${e.message}; the backup route also failed (${jupErr.message})`), {
           phase: e.phase,
@@ -3195,9 +2766,6 @@ class Engine extends EventEmitter {
    * the same. A swap that answers with a signature has landed, which is why `landed` is true here.
    */
   async _backupTrade(action, mint, solAmount, opt) {
-    // RULE ADDED 2026-11-05: a backup route that is refusing to quote is not asked on every attempt. Jupiter answered
-    // "400 Failed to get quotes" for hours that afternoon, and every refused sale waited for it before giving up -
-    // while the one door that could fill the order was ready. A minute of rest, then it is asked again.
     if (this._jupDownUntil && Date.now() < this._jupDownUntil) {
       throw Object.assign(new Error('the backup route is resting after a refusal'), { rested: true });
     }
@@ -3234,11 +2802,6 @@ class Engine extends EventEmitter {
     });
   }
 
-  /**
-   * Raw token balance of the wallet for one mint, and whether the account itself is gone - which is what returns its
-   * rent. The two are returned together because a shared flag could be overwritten by another balance read between
-   * the answer and the moment it is used, and that would put a rent-sized hole in the profit of a sale.
-   */
   async _balanceDetail(mint) {
     const owner = this.wallet.keypair && this.wallet.keypair.publicKey;
     if (!owner) throw new Error('Wallet is locked');
@@ -3263,17 +2826,6 @@ class Engine extends EventEmitter {
     return d.amount;
   }
 
-  /**
-   * Wait for the chain to answer. Three outcomes, because "the RPC could not tell me" is not "it failed":
-   * `confirmed`, `failed` (the chain rejected it, and only that) and `unknown` (no confirmation, no rejection).
-   * The rejection reason is returned with it, because the code names the market that refused the order.
-   *
-   * The first status is asked for at once - a slot is 400 ms and the first poll used to burn one of them - and the
-   * exit path accepts `processed`, because the wallet balance is what decides whether tokens really left. A status
-   * that is written into a fork the chain then drops comes back as a failed or missing transaction on the balance
-   * read, and that read is the one that closes a position.
-   * @returns {Promise<{state: 'confirmed'|'failed'|'unknown', err: string}>}
-   */
   async _confirm(sig, raw, opts = {}) {
     const step = opts.step || 250;
     const polls = Math.max(2, Number(opts.polls) || CONFIRM_POLLS);
@@ -3358,13 +2910,6 @@ class Engine extends EventEmitter {
     return { left: left == null ? null : left.toString(), gained };
   }
 
-  /**
-   * Sell every coin the wallet holds and hand the rent back.
-   * The book only knows what this process bought, and a wallet can hold more than that: a coin bought by hand, one
-   * left behind by a crash before the book was written, an account closed by a partial exit. So the wallet balance,
-   * not the book, decides what leaves: each holding goes out through the backup route, which quotes the market it
-   * finds rather than the one assumed, and each account that ends empty is closed so its rent comes home.
-   */
   async sellEverything() {
     this._requireWallet();
     if (this._sellingAll) throw new Error('A sell-all is already running.');
@@ -3526,12 +3071,10 @@ class Engine extends EventEmitter {
     }
     this.emit('state', {
       running: this.running, mode: s.mode, connected: this.connected,
+      recording: this.recorder ? this.recorder.status() : null,
       balance: this._balance(), walletBalance: this.walletBalance,
       reserveSol: s.mode === 'live' ? this._reserveSol() : 0,
       freeSol: s.mode === 'live' ? this._freeSol() : this._balance(),
-      // What the wallet really did since Start, fees included. While coins are open the money is inside them, so the
-      // open part is marked at the price it is held at and its rent is counted back - otherwise a buy would look like
-      // a loss. With nothing open this is exactly the wallet, which is the number that cannot lie.
       sessionStartSol: this.sessionStart ? this.sessionStart.balance : null,
       walletDeltaSol: this._walletDelta(),
       stats: { ...this.stats, ...this.books[s.mode === 'live' ? 'live' : 'paper'], buysPerMin, launchesPerMin },

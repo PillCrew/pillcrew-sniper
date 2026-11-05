@@ -54,6 +54,7 @@ function decodeEvent(base64) {
       if (b.length < 8 + 32 + 8 + 8 + 1 + 32 + 8 + 8 + 8) return null;
       const mint = b58(b.subarray(8, 40));
       const sol = b.readBigUInt64LE(40);
+      if (b[56] > 1) return null;
       const isBuy = b[56] === 1;
       const user = b58(b.subarray(57, 89));
       const vSol = b.readBigUInt64LE(97);
@@ -65,10 +66,18 @@ function decodeEvent(base64) {
       const name = readString(b, o);
       const symbol = readString(b, o);
       readString(b, o); // uri
+      if (o.p + 96 > b.length) return null;
       const mint = b58(b.subarray(o.p, o.p + 32)); o.p += 32;
       o.p += 32;        // bonding curve
       const user = b58(b.subarray(o.p, o.p + 32));
-      return { txType: 'create', mint, name, symbol, traderPublicKey: user, solAmount: 0, marketCapSol: marketCapSol(30000000000n, 1073000000000000n), fromChain: true };
+      const key = b.subarray(o.p + 32, o.p + 64);
+      const creator = key.length === 32 && key.some((byte) => byte !== 0) ? b58(key) : null;
+      // The current CreateEvent appends quote_mint after the reserve and mode fields.
+      const quoteOffset = o.p + 64 + 5 * 8 + 32 + 2;
+      const quoteKey = b.subarray(quoteOffset, quoteOffset + 32);
+      if (quoteKey.length && quoteKey.length !== 32) return null;
+      const quoteMint = quoteKey.length && quoteKey.some((byte) => byte !== 0) ? b58(quoteKey) : null;
+      return { txType: 'create', creator, quoteMint, mint, name, symbol, traderPublicKey: user, solAmount: 0, marketCapSol: marketCapSol(30000000000n, 1073000000000000n), fromChain: true };
     }
   } catch (_) { /* malformed / newer layout - ignore */ }
   return null;
@@ -94,6 +103,7 @@ class ChainFeed extends EventEmitter {
     this.url = '';
     this._timer = null;
     this._rateTimer = null;
+    this.seen = new Set();
   }
 
   endpoints() {
@@ -121,6 +131,7 @@ class ChainFeed extends EventEmitter {
 
   stop() {
     this.want = false;
+    clearTimeout(this._retryTimer);
     clearInterval(this._rateTimer); clearInterval(this._timer);
     if (this.ws) { try { this.ws.terminate(); } catch (_) {} this.ws = null; }
     this.connected = false;
@@ -137,9 +148,10 @@ class ChainFeed extends EventEmitter {
       this.lastMsg = Date.now();
       ws.send(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'logsSubscribe', params: [{ mentions: [PUMP_PROGRAM] }, { commitment: 'processed' }] }));
     });
-    ws.on('message', (d) => { this.lastMsg = Date.now(); this._onMessage(d.toString()); });
+    ws.on('message', (d) => { if (ws !== this.ws) return; this.lastMsg = Date.now(); this._onMessage(d.toString()); });
     ws.on('error', () => {});
     ws.on('close', () => {
+      if (ws !== this.ws) return;
       const was = this.connected;
       this.connected = false; this.ws = null;
       this.emit('status', { connected: false, url: this.url });
@@ -150,7 +162,8 @@ class ChainFeed extends EventEmitter {
   _retry() {
     this.idx++;
     if (this.fails >= 4) this.emit('giveup');
-    setTimeout(() => this._open(), Math.min(5000, 400 * (this.fails + 1)));
+    clearTimeout(this._retryTimer);
+    if (this.want) this._retryTimer = setTimeout(() => this._open(), Math.min(5000, 400 * (this.fails + 1)));
   }
 
   _watchdog() {
@@ -164,11 +177,33 @@ class ChainFeed extends EventEmitter {
     if (m.method !== 'logsNotification') return;
     const v = m.params && m.params.result && m.params.result.value;
     if (!v || v.err || !Array.isArray(v.logs)) return;
+    if (!v.signature || this.seen.has(v.signature)) return;
+    const frames = [];
+    const accepted = [];
     for (const line of v.logs) {
-      if (!line.startsWith('Program data: ')) continue;
-      const ev = decodeEvent(line.slice(14));
-      if (ev) { this.count++; this.emit('event', ev); }
+      if (typeof line !== 'string') return;
+      const invoke = /^Program (\w+) invoke \[(\d+)\]$/.exec(line);
+      if (invoke) {
+        if (Number(invoke[2]) !== frames.length + 1) return;
+        frames.push({ program: invoke[1], events: [] });
+        continue;
+      }
+      const frame = frames.at(-1);
+      if (!frame) continue;
+      const end = /^Program (\w+) (success|failed:.*)$/.exec(line);
+      if (end) {
+        if (end[1] !== frame.program) return;
+        frames.pop();
+        if (end[2] === 'success') (frames.at(-1)?.events || accepted).push(...frame.events);
+      } else if (frame.program === PUMP_PROGRAM && line.startsWith('Program data: ')) {
+        const event = decodeEvent(line.slice(14));
+        if (event) frame.events.push(event);
+      }
     }
+    if (frames.length || !accepted.length) return;
+    if (this.seen.size >= 4096) this.seen.delete(this.seen.values().next().value);
+    this.seen.add(v.signature);
+    for (const event of accepted) { this.count++; this.emit('event', event); }
   }
 }
 

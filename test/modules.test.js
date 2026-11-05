@@ -95,11 +95,12 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   // RULE CHANGED 2026-11-05: the shipped profile now runs three positions at a time (the measured profit plan), and
   // this harness opens one position per scenario without ever closing it. Room to spare keeps each case testing its
   // own rule instead of the third slot filling up.
-  store.set({ maxPositions: 8, maxBuysPerMin: 60 });
+  store.set({ minTokenAgeSec: 0, paperLatencyMs: 0, maxPositions: 8, maxBuysPerMin: 60 });
   const e = new Engine(wallet, store);
+  e.risk.check = async () => null;
   clearInterval(e._bal); clearInterval(e._ui); e.refreshBalance = () => {};
   let used = null; e._connectPortal = () => { used = 'portal'; }; e._startChain = () => { used = 'chain'; };
-  e.wantWs = false; e._connect(); assert.strictEqual(used, 'portal', 'auto without private RPC goes straight to the working feed');
+  e.wantWs = false; e._connect(); assert.strictEqual(used, 'chain', 'auto without credentials uses public program logs');
   store.set({ rpcUrl: 'https://private.example/key' }); e._connect(); assert.strictEqual(used, 'chain', 'auto with private RPC uses the blockchain feed');
   store.set({ rpcUrl: '', feedSource: 'chain' }); e._connect(); assert.strictEqual(used, 'chain');
   store.set({ feedSource: 'auto' });
@@ -111,7 +112,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
 
   // The backup route answers without a key now, so a build failure goes there first. Here it is made to fail as
   // well, which is what a coin with no Jupiter route looks like.
-  e._jupiterSwap = async () => { throw new Error('Jupiter has no route'); };
+  e._jupiterSwap = async () => { throw Object.assign(new Error('Jupiter has no route'), { phase: 'build', definite: true }); };
   let attempts = 0;
   e._execLive = async () => { attempts++; if (attempts === 1) { const err = new Error('Trade API timed out'); err.phase = 'build'; throw err; } return { sig: 's', raw: null }; };
   // RULE CHANGED: confirmation now has three outcomes ('confirmed' / 'failed' / 'unknown'), because "the RPC could
@@ -181,6 +182,8 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   t7.lastStreamAt = nowH;
   let holderCalls = 0;
   e.market.holders = async () => { holderCalls++; return { holders: 40 }; };
+  assert.match(e._eval(t7, nowH).reason, /current pool liquidity/);
+  t7.ext = { at: nowH, liqUsd: 9000 };
   const held = e._eval(t7, nowH);
   assert.match(held.reason, /Needs 20 holders \(has 7\)/, `the cached gate refuses before any other rule, got "${held.reason}"`);
   t7.holders = 40;
@@ -188,7 +191,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   assert.strictEqual(holderCalls, 0, 'the evaluator never asks for a count it already has');
   // The rest of this harness exercises the FULL desk (audits, dev bags, the five minute band), so it is put back on
   // the shipped numbers with the simple mode off - the shipped default is the simple one.
-  store.set({ ...DEFAULTS, simpleMode: false, deepEntry: false, minHolders: 0 });
+  store.set({ ...DEFAULTS, paperLatencyMs: 0, minTokenAgeSec: 0, simpleMode: false, deepEntry: false, minHolders: 0 });
 
   // sell: confirmation timed out but tokens are gone -> treated as sold
   e._execLive = async () => ({ sig: 's', raw: null }); e._confirm = async () => ({ state: 'unknown', err: '' }); e._tokenBalanceRaw = async () => 0n; e._scheduleReclaim = () => {};
@@ -278,7 +281,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   // ticket with a 0.0001 entry tip and a 0.0002 exit tip that is 1.5% of the round trip, where a fixed-amount tip of
   // 0.0002 both ways on a 0.004 ticket is 10%. That is exactly why the old defaults looked like they lost money: a
   // "break even" that fired at 0% was really booked at -2% (and at -10% on a 0.004 ticket).
-  assert.ok(Math.abs(e._costPct(pos) - (3 + 1.5)) < 0.01, `3% protocol plus the real 1.5% of tips on 0.02, got ${e._costPct(pos)}`);
+  assert.ok(Math.abs(e._costPct(pos) - (3.5 + 1.525)) < 0.01, `protocol, priority and base network fees are included, got ${e._costPct(pos)}`);
 
   // A quote that jumps further than anything believable in one tick does not drag the price: the anchor stays put, so
   // one wild print on a thin pool cannot show +135% and then -70% a second later.
