@@ -256,7 +256,7 @@ numbers, and only those numbers decide:
 | Key | Meaning |
 | --- | --- |
 | `minMcSol` / `maxMcSol` | The market cap band the coin must sit in |
-| `minBuyers` | The buyer floor: fewer distinct wallets than this, no buy |
+| `minBuyers` | The buyer floor: fewer distinct wallets than this, no buy. A launch is counted over 20 seconds; a coin found by the market scan is counted over five minutes and must carry **double** the number (at 50 that is 100 buys in five), because that window holds far more trades |
 | `maxBuyers` | The buyer ceiling: more wallets than this, no buy. `0` is off |
 | `buyAmountSol` | The ticket per coin |
 | `maxPositions` | How many coins may be open at once |

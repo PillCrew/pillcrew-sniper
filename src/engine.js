@@ -1546,6 +1546,25 @@ class Engine extends EventEmitter {
   _scan(now) {
     const all = [...this.tokens.values()];
     if (!all.length) return;
+    // RULE ADDED 2026-11-05 (1.0.4, the owner: "czemu od razu 10 monet nie kupuje jak dałem 10 slotów?"): when the book
+    // is not full, the diary says WHAT is holding it back, once a minute, as counts of the reasons the last evaluation
+    // left on each coin. Free slots are almost never a speed problem - they are the entry bar doing its job, and that is
+    // impossible to see from a screen that only shows the coins which passed.
+    if (this.running && this.positions.size < this.s.maxPositions && (!this._slotsAt || now - this._slotsAt > 60000)) {
+      this._slotsAt = now;
+      const why = new Map();
+      for (const t of all) {
+        if (this.positions.has(t.mint) || t.status === 'bought') continue;
+        const key = String(t.reason || 'not judged yet').replace(/\(.*?\)/g, '').replace(/\d+/g, 'N').trim();
+        why.set(key, (why.get(key) || 0) + 1);
+      }
+      const top = [...why.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+      if (top.length) {
+        this._log('info', `${this.positions.size} of ${this.s.maxPositions} slots busy. The rest of the market: `
+          + top.map(([k, n]) => `${n} × ${k.toLowerCase()}`).join(', ')
+          + '. Lower the entry bar in Settings if you want the book filled faster.');
+      }
+    }
     const due = [];
     for (let i = 0; i < all.length && due.length < SCAN_PER_TICK; i++) {
       this._scanCursor = ((this._scanCursor || 0) + 1) % all.length;

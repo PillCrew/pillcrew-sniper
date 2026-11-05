@@ -3,6 +3,20 @@
 All notable changes to this project are recorded here. The format follows Keep a Changelog and the
 project uses semantic versioning.
 
+## [1.0.4] - 2026-11-05
+
+### The desk says what is holding the book back
+A book that is not full looks like a bot that is asleep, and it is almost never speed: it is the entry bar
+refusing coins. Once a minute, while a run is open and there are free slots, the diary now counts the
+reasons the rest of the market was left alone — `4 of 10 slots busy. The rest of the market: 36 × needs N
+buyers in Nm, 33 × market cap out of range, 3 × pool too thin` — so a free slot can be read as a decision
+instead of a fault. Nothing about the entry rules changed; this only makes the same rules visible.
+
+The buyer setting also now says what it means for a scanned coin: a coin found by the market scan is
+counted over five minutes and must carry **double** the number, because that window holds far more trades.
+At 50 that is 100 buys in five minutes, which is why a market showing a median of seven buyers fills the
+book slowly.
+
 ## [1.0.3] - 2026-11-05
 
 ### Winners stop being given back on a stale price

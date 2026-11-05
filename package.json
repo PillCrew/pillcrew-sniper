@@ -1,7 +1,7 @@
 {
   "name": "pillcrew-sniper",
   "productName": "PillCrew Sniper",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "PillCrew Sniper - beginner-friendly Pump.fun trading bot with a built-in wallet",
   "main": "main.js",
   "author": {

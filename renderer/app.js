@@ -736,7 +736,7 @@
     ['paperFailurePct', 'Practice order failure rate (%)', 1, 'Repeat with several rates. A failed order leaves an existing position open.'],
     ['paperSeed', 'Practice random seed', 1, 'Use the same seed when comparing failure scenarios. Applied after restart.'],
     ['minScore', 'Minimum score to buy (0-100)', 1, 'What the bot has to see before it spends. Higher means fewer, stronger entries.'],
-    ['minBuyers', 'Buyers needed in the window', 1, 'Distinct wallets. Coins found by the market scan are read over five minutes instead.'],
+    ['minBuyers', 'Buyers needed in the window', 1, 'Distinct wallets in a twenty second window. A coin found by the market scan is counted over five minutes and needs DOUBLE this number, because that window carries far more trades - at 50 that is 100 buys in five minutes.'],
     ['minNetFlowSol', 'The coin needs net buying of (SOL)', 0.1, 'Buys minus sells on the coin’s own tape, in the last few seconds. This is about the coin, not your ticket: 1 means other people bought a whole SOL more than they sold.'],
     ['minLiqUsd', 'Skip if the pool holds less than ($)', 100, 'A thin pool cannot absorb an exit. Zero turns the check off.'],
     ['watchSec', 'Watch a new coin for (seconds)', 1, 'How long a launch is watched before it may be bought.'],
