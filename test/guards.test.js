@@ -3,6 +3,10 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+// Every scratch directory this suite makes lives under one root that is removed on exit, and roots left by an
+// earlier run are swept (see `test/scratch.js`).
+const scratchDir = require('./scratch').root;
 const {
   Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction, VersionedTransaction, TransactionMessage,
 } = require('@solana/web3.js');
@@ -84,7 +88,7 @@ const tokenOp = (tag) => new TransactionInstruction({
   {
     const { Store } = require('../src/store');
     const { Engine, DEFAULTS } = require('../src/engine');
-    const gdir = fs.mkdtempSync(path.join(os.tmpdir(), 'guardtx-'));
+    const gdir = fs.mkdtempSync(path.join(scratchDir, 'guardtx-'));
     const gwallet = { exists: () => true, isUnlocked: () => true, address: () => owner, keypair: kp };
     const ge = new Engine(gwallet, new Store(gdir, 's.json', DEFAULTS));
     clearInterval(ge._bal); clearInterval(ge._ui);
@@ -109,7 +113,7 @@ const tokenOp = (tag) => new TransactionInstruction({
   // ---- the sale book follows the wallet, not the request ----
   const { Store } = require('../src/store');
   const { Engine, DEFAULTS } = require('../src/engine');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guards-'));
+  const dir = fs.mkdtempSync(path.join(scratchDir, 'guards-'));
   const store = new Store(dir, 's.json', DEFAULTS);
   const wallet = { exists: () => true, isUnlocked: () => true, address: () => owner, keypair: kp };
   const e = new Engine(wallet, store);
@@ -188,7 +192,7 @@ const tokenOp = (tag) => new TransactionInstruction({
   // rent read as +0.035 SOL of profit the second the bot started), and a deposit read as profit because the wallet is
   // one of the two numbers in the subtraction.
   {
-    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pcs-pnl-'));
+    const dir2 = fs.mkdtempSync(path.join(scratchDir, 'pcs-pnl-'));
     const wallet2 = { exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: null };
     const store2 = new Store(dir2, 's.json', DEFAULTS);
     store2.set({ mode: 'live', buyAmountSol: 0.01 });

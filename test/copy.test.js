@@ -4,6 +4,10 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+// Every scratch directory this suite makes lives under one root that is removed on exit, and roots left by an
+// earlier run are swept (see `test/scratch.js`).
+const scratchDir = require('./scratch').root;
 const { Engine, DEFAULTS } = require('../src/engine');
 const { Store } = require('../src/store');
 
@@ -11,7 +15,7 @@ const WATCHED = '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU';
 const OTHER = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
 
 function engine(extra = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-copy-'));
+  const dir = fs.mkdtempSync(path.join(scratchDir, 'pc-copy-'));
   const store = new Store(dir, 's.json', { ...DEFAULTS, mode: 'paper', ...extra });
   const e = new Engine({ exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: { publicKey: { toBase58: () => 'W' } } }, store);
   for (const id of ['_loop', '_ui', '_pxTimer', '_bal', '_marketTimer', '_hotTimer', '_posTimer']) clearInterval(e[id]);

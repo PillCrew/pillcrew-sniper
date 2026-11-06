@@ -2,15 +2,19 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+// Every scratch directory this suite makes lives under one root that is removed on exit, and roots left by an
+// earlier run are swept (see `test/scratch.js`).
+const scratchDir = require('./scratch').root;
 const { Store } = require('../src/store');
 const { Engine, DEFAULTS } = require('../src/engine');
 const WSOL = 'So11111111111111111111111111111111111111112';
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'exits-'));
+const dir = fs.mkdtempSync(path.join(scratchDir, 'exits-'));
 const wallet = { exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: null };
 
 function engine(overrides = {}, storeDir = null) {
-  const store = new Store(storeDir || fs.mkdtempSync(path.join(os.tmpdir(), 'exits-')), 's.json', DEFAULTS);
+  const store = new Store(storeDir || fs.mkdtempSync(path.join(scratchDir, 'exits-')), 's.json', DEFAULTS);
   // RULE CHANGED 2026-11-05: the shipped plan is the SIMPLE one (target, stop, time limit, and one give-back floor
   // for a big run). Every case below names the ladder it is testing, so the harness runs the full desk - and the
   // simple-mode behaviour has its own cases here and in `modules.test.js`.
@@ -1081,7 +1085,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
   // every restart wiped the day's profit and loss and the panel claimed a session that had never traded - and this
   // app is restarted a dozen times a day while it is being tended.
   {
-    const bookDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exits-book-'));
+    const bookDir = fs.mkdtempSync(path.join(scratchDir, 'exits-book-'));
     const e1 = engine({}, bookDir);
     const p1 = open(e1, 'KEEP', 1);
     p1.mc = 100 * (1 + 60 / 100);

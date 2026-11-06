@@ -2,6 +2,10 @@ const assert = require('assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+// Every scratch directory this suite makes lives under one root that is removed on exit, and roots left by an
+// earlier run are swept (see `test/scratch.js`).
+const scratchDir = require('./scratch').root;
 const { pathToFileURL } = require('url');
 const { Keypair, PublicKey, SystemProgram, ComputeBudgetProgram, TransactionMessage, VersionedTransaction } = require('@solana/web3.js');
 const { Store } = require('../src/store');
@@ -14,7 +18,7 @@ const { SessionRecorder } = require('../src/recorder');
 const { replay } = require('../src/backtest');
 const { slippageFraction } = require('../src/simulation');
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pillcrew-audit-'));
+const dir = fs.mkdtempSync(path.join(scratchDir, 'pillcrew-audit-'));
 const engines = [];
 function engine(settings = {}) {
   const store = new Store(fs.mkdtempSync(path.join(dir, 'case-')), 'settings.json', DEFAULTS);

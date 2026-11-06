@@ -78,7 +78,11 @@ const fillLine = (isBuy = true) => 'Program data: ' + trade(isBuy, 1_500_000_000
   const fs = require('fs');
   const os = require('os');
   const path = require('path');
-  const store = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pc-geyser-')), 's.json', { ...DEFAULTS, mode: 'paper' });
+
+// Every scratch directory this suite makes lives under one root that is removed on exit, and roots left by an
+// earlier run are swept (see `test/scratch.js`).
+const scratchDir = require('./scratch').root;
+  const store = new Store(fs.mkdtempSync(path.join(scratchDir, 'pc-geyser-')), 's.json', { ...DEFAULTS, mode: 'paper' });
   const e = new Engine({ exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: null }, store);
   for (const id of ['_loop', '_ui', '_pxTimer', '_bal', '_marketTimer', '_hotTimer', '_posTimer']) clearInterval(e[id]);
   e.refreshBalance = () => {};

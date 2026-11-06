@@ -2,6 +2,10 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+// Every scratch directory this suite makes lives under one root that is removed on exit, and roots left by an
+// earlier run are swept (see `test/scratch.js`).
+const scratchDir = require('./scratch').root;
 const { Store } = require('../src/store');
 const { Engine, DEFAULTS } = require('../src/engine');
 const { curveAddress, readCurveAccount, readCurves, MIN_LEN } = require('../src/curve');
@@ -73,7 +77,7 @@ const LAUNCH_VSOL = 30000000000n;
 
   // The engine prices a coin it is holding from the curve when nothing else can: no stream, no price service, no board.
   {
-    const store = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'curve-')), 's.json', DEFAULTS);
+    const store = new Store(fs.mkdtempSync(path.join(scratchDir, 'curve-')), 's.json', DEFAULTS);
     store.set({ mode: 'paper' });
     const e = new Engine({ exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: null }, store);
     clearInterval(e._bal);
@@ -110,7 +114,7 @@ const LAUNCH_VSOL = 30000000000n;
   // which booked a stop loss 0 to 16 s after the buy on a coin that had not fallen that far: the entry was blind, not
   // the exit late.
   {
-    const store = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'curve-')), 's.json', DEFAULTS);
+    const store = new Store(fs.mkdtempSync(path.join(scratchDir, 'curve-')), 's.json', DEFAULTS);
     store.set({ mode: 'paper' });
     const e = new Engine({ exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: null }, store);
     clearInterval(e._bal);
@@ -199,7 +203,7 @@ const LAUNCH_VSOL = 30000000000n;
   // A FINISHED curve is a fossil, not a price. Measured in a paper run on the live market: two coins were entered at a
   // frozen curve figure and then "ran" +264% and +308% within a second - the graduation number read as a market.
   {
-    const store = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'curve-')), 's.json', DEFAULTS);
+    const store = new Store(fs.mkdtempSync(path.join(scratchDir, 'curve-')), 's.json', DEFAULTS);
     store.set({ mode: 'paper' });
     const e = new Engine({ exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: null }, store);
     clearInterval(e._bal); clearInterval(e._ui);
@@ -235,7 +239,7 @@ const LAUNCH_VSOL = 30000000000n;
   // A jump UP in the curve is two numbers from two sources until it is seen twice; a FALL is taken at once, because a
   // stop must fire on it.
   {
-    const store = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'curve-')), 's.json', DEFAULTS);
+    const store = new Store(fs.mkdtempSync(path.join(scratchDir, 'curve-')), 's.json', DEFAULTS);
     store.set({ mode: 'paper' });
     const e = new Engine({ exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: null }, store);
     clearInterval(e._bal); clearInterval(e._ui);

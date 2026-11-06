@@ -3,12 +3,16 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+// Every scratch directory this suite makes lives under one root that is removed on exit, and roots left by an
+// earlier run are swept (see `test/scratch.js`).
+const scratchDir = require('./scratch').root;
 const { WalletManager } = require('../src/wallet');
 const { Store } = require('../src/store');
 const { Engine, DEFAULTS } = require('../src/engine');
 
 (async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcs-'));
+  const dir = fs.mkdtempSync(path.join(scratchDir, 'pcs-'));
 
   // wallet
   const w = new WalletManager(dir);
@@ -22,10 +26,10 @@ const { Engine, DEFAULTS } = require('../src/engine');
   assert.strictEqual(w2.address(), address);
   assert.throws(() => w2.unlock('nope nope nope'), /Wrong password/);
   w2.unlock('correct horse battery');
-  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pcs-'));
+  const dir2 = fs.mkdtempSync(path.join(scratchDir, 'pcs-'));
   const w3 = new WalletManager(dir2);
   assert.strictEqual(w3.importKey(key, 'another password').address, address);
-  assert.throws(() => new WalletManager(fs.mkdtempSync(path.join(os.tmpdir(), 'pcs-'))).importKey('garbage', 'password123'), /private key/i);
+  assert.throws(() => new WalletManager(fs.mkdtempSync(path.join(scratchDir, 'pcs-'))).importKey('garbage', 'password123'), /private key/i);
 
   // A wallet can be replaced or removed, but only on purpose: the plain call refuses while one exists.
   assert.throws(() => w3.create('another password'), /already exists/);
@@ -39,7 +43,7 @@ const { Engine, DEFAULTS } = require('../src/engine');
 
   // A wallet file that exists but cannot be read is damage, not an empty slot: the old code answered "no wallet"
   // for a truncated file and the create screen then wrote a brand-new key over it.
-  const dir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'pcs-'));
+  const dir3 = fs.mkdtempSync(path.join(scratchDir, 'pcs-'));
   const broken = new WalletManager(dir3);
   broken.create('damaged file test');
   fs.writeFileSync(path.join(dir3, 'wallet.json'), '{"version":1,"address":"abc"');
@@ -58,7 +62,7 @@ const { Engine, DEFAULTS } = require('../src/engine');
 
   // A withdrawal is signed ONCE. The old code fetched the blockhash, signed and sent inside the retried callback,
   // so one timeout produced a second, different transaction and could pay the same withdrawal twice.
-  const dir4 = fs.mkdtempSync(path.join(os.tmpdir(), 'pcs-'));
+  const dir4 = fs.mkdtempSync(path.join(scratchDir, 'pcs-'));
   const wd = new WalletManager(dir4);
   wd.create('withdraw test password');
   const sent = [];

@@ -4,6 +4,10 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+// Every scratch directory this suite makes lives under one root that is removed on exit, and roots left by an
+// earlier run are swept (see `test/scratch.js`).
+const scratchDir = require('./scratch').root;
 const {
   Keypair, PublicKey, SystemProgram, Transaction, VersionedTransaction, LAMPORTS_PER_SOL,
 } = require('@solana/web3.js');
@@ -19,7 +23,7 @@ const TIP = 'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh';
   const wallet = { exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: Keypair.generate() };
 
   function engine(overrides = {}) {
-    const store = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'jito-')), 's.json', DEFAULTS);
+    const store = new Store(fs.mkdtempSync(path.join(scratchDir, 'jito-')), 's.json', DEFAULTS);
     store.set({ mode: 'live', buyAmountSol: 0.004, priorityFeeSol: 0.0002, ...overrides });
     const e = new Engine(wallet, store);
     clearInterval(e._bal); clearInterval(e._ui); clearInterval(e._pxTimer);

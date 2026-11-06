@@ -142,8 +142,12 @@ const { RPCManager, DEFAULT_ENDPOINTS, classify } = require('../src/rpc');
     const fs = require('fs');
     const os = require('os');
     const path = require('path');
+
+// Every scratch directory this suite makes lives under one root that is removed on exit, and roots left by an
+// earlier run are swept (see `test/scratch.js`).
+const scratchDir = require('./scratch').root;
     const made = (patch) => {
-      const store = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pc-feed-')), 's.json', { ...DEFAULTS, mode: 'paper', ...patch });
+      const store = new Store(fs.mkdtempSync(path.join(scratchDir, 'pc-feed-')), 's.json', { ...DEFAULTS, mode: 'paper', ...patch });
       const e = new Engine({ exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: null }, store);
       for (const id of ['_loop', '_ui', '_pxTimer', '_bal', '_marketTimer', '_hotTimer', '_posTimer']) clearInterval(e[id]);
       e.refreshBalance = () => {};

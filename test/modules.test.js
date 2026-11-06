@@ -2,6 +2,10 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+// Every scratch directory this suite makes lives under one root that is removed on exit, and roots left by an
+// earlier run are swept (see `test/scratch.js`).
+const scratchDir = require('./scratch').root;
 const reclaim = require('../src/reclaim');
 const { Jupiter } = require('../src/jupiter');
 const { Market } = require('../src/market');
@@ -89,7 +93,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   await assert.rejects(new Incinerator(() => '').burn('w', 'm'), /Add your Sol Incinerator API key/);
 
   // ---- engine: feed choice, retries, late landing, Jupiter backup ----
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-'));
+  const dir = fs.mkdtempSync(path.join(scratchDir, 'pcm-'));
   const wallet = { exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: { publicKey: { toBase58: () => 'W' } } };
   const store = new Store(dir, 's.json', DEFAULTS);
   // RULE CHANGED 2026-11-05: the shipped profile now runs three positions at a time (the measured profit plan), and
@@ -504,7 +508,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   // board refreshed `lastActivity` for every coin on it, the pruner therefore found nothing idle, and no new launch was
   // ever tracked again - the desk went blind while the log kept saying how many it had "found".
   {
-    const e2 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-room-')), 's.json', DEFAULTS));
+    const e2 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(scratchDir, 'pcm-room-')), 's.json', DEFAULTS));
     clearInterval(e2._bal); clearInterval(e2._ui); e2.refreshBalance = () => {};
     for (let i = 0; i < 400; i++) {
       const t = { mint: 'OLD' + i, symbol: 'OLD', createdAt: Date.now() - 60000, lastActivity: Date.now(), mc: 40, mcHist: [], trades: [], status: 'watching', score: 50, reason: '', sources: new Set(['x']) };
@@ -523,7 +527,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   // RULE ADDED 2026-11-05: the board answering is not the coin doing something. Refreshing `lastActivity` from the
   // market board kept every tracked coin "alive", which is what clogged the map in the first place.
   {
-    const e3 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-clock-')), 's.json', DEFAULTS));
+    const e3 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(scratchDir, 'pcm-clock-')), 's.json', DEFAULTS));
     clearInterval(e3._bal); clearInterval(e3._ui); e3.refreshBalance = () => {};
     e3.market.solUsd = 150;
     e3._adopt({ mint: 'CLOCK', source: 'launch' });
@@ -555,7 +559,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   {
     // RULE CHANGED 2026-11-05 (1.0.2): the shipped plan's target is 80%, so this case names the target it is testing -
     // it is about what is net of fees, not about where the shipped target sits.
-    const e5 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-dex-')), 's.json', DEFAULTS));
+    const e5 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(scratchDir, 'pcm-dex-')), 's.json', DEFAULTS));
     clearInterval(e5._bal); clearInterval(e5._ui); e5.refreshBalance = () => {};
     e5._adopt({ mint: 'SWAP1', source: 'market', hint: { symbol: 'SW1', dexId: 'pumpswap', priceNative: 0.0000001, buys: 60, sells: 5, change5m: 10 } });
     const g = e5.tokens.get('SWAP1');
@@ -574,7 +578,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
     // a graduated coin keeps its old pump.fun pair listed, frozen at the graduation figure. That row is not "foreign", so
     // it used to be allowed to set the market cap - a thirty-one-fold peak out of a fossil. The same `_ownPool` rule that
     // guards the position price now guards the market cap.
-    const g2 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-fossil-')), 's.json', DEFAULTS));
+    const g2 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(scratchDir, 'pcm-fossil-')), 's.json', DEFAULTS));
     clearInterval(g2._bal); clearInterval(g2._ui); g2.refreshBalance = () => {};
     g2._adopt({ mint: 'FOSSIL1', source: 'market', hint: { symbol: 'FOS', priceNative: 0.0000002, dexId: 'pumpswap' } });
     const fossil = g2.tokens.get('FOSSIL1');
@@ -593,7 +597,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   // that day, and with the holder bar on (the one press preset switches it on) no buy could pass - the only trace was
   // "Holder count unknown" on coin after coin.
   {
-    const e4 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-hold-')), 's.json', DEFAULTS));
+    const e4 = new Engine(wallet, new Store(fs.mkdtempSync(path.join(scratchDir, 'pcm-hold-')), 's.json', DEFAULTS));
     clearInterval(e4._bal); clearInterval(e4._ui); e4.refreshBalance = () => {};
     const lines = [];
     e4._log = (level, msg) => lines.push(level + ': ' + msg);
@@ -643,7 +647,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   // RULE ADDED 2026-11-06 (1.1.1): a restart must not silently close a practice trade or reset the bankroll under a
   // restored Profit / Loss. The book and the money are written and read together.
   {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-restart-'));
+    const dir = fs.mkdtempSync(path.join(scratchDir, 'pcm-restart-'));
     const st1 = new Store(dir, 's.json', DEFAULTS);
     st1.set({ mode: 'paper', paperLatencyMs: 0, paperBaseSlippagePct: 0, paperUnknownImpactPct: 0 });
     const a = new Engine(wallet, st1);
@@ -704,7 +708,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
     // Starting the desk is what brings a saved practice row back - not merely building the engine - and it must not
     // touch a real position that is also on disk: the practice desk is not the one managing it.
     {
-      const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-start-'));
+      const dir2 = fs.mkdtempSync(path.join(scratchDir, 'pcm-start-'));
       const st4 = new Store(dir2, 's.json', DEFAULTS);
       const real = { mint: 'REALROW', symbol: 'REALROW', entryMc: 100, mc: 100, peakMc: 100, solIn: 0.1, feeBuy: 0, openedAt: Date.now(), paper: false };
       const paper = { mint: 'PAPERROW', symbol: 'PAPERROW', entryMc: 100, mc: 100, peakMc: 100, solIn: 0.1, feeBuy: 0, openedAt: Date.now(), paper: true };

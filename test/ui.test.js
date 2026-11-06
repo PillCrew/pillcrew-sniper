@@ -6,7 +6,12 @@ const { Engine, DEFAULTS } = require('../src/engine');
 const { trustedSender } = require('../src/ipcguard');
 const Share = require('../src/share');
 
-app.setPath('userData', require('fs').mkdtempSync(path.join(require('os').tmpdir(), 'pillcrew-ui-')));
+// RULE ADDED 2026-11-06 (1.1.1): the profile this test opens lives under one scratch root and is removed when the test
+// exits. Electron writes a whole Chromium profile per run, and a harness that leaves it behind fills the temp folder.
+// Every scratch directory this test makes lives under one root that is removed on exit, and roots left by an earlier
+// run are swept (see `test/scratch.js`).
+const scratchDir = require('./scratch').root;
+app.setPath('userData', path.join(scratchDir, 'profile'));
 const timer = setTimeout(() => { console.error('UI test timed out'); app.exit(1); }, 20000);
 app.whenReady().then(async () => {
   const entry = path.join(__dirname, '..', 'renderer', 'index.html');
@@ -76,5 +81,10 @@ app.whenReady().then(async () => {
   assert.deepEqual(errors, []);
   clearTimeout(timer);
   console.log('Electron UI smoke test passed (hidden window, isolated mock wallet, trading stopped)');
+  // The window is closed before exit, and the profile is removed on the way out. While Chromium's own children are
+  // still alive this usually fails on Windows - so the sweep in `test/scratch.js` removes it at the start of the next
+  // run, which is what keeps the temp folder from growing.
+  win.destroy();
+  try { require('fs').rmSync(scratchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch (_) { /* swept by the next run */ }
   app.exit(0);
 }).catch((err) => { console.error(err); app.exit(1); });

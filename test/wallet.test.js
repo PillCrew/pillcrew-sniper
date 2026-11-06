@@ -2,6 +2,10 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+// Every scratch directory this suite makes lives under one root that is removed on exit, and roots left by an
+// earlier run are swept (see `test/scratch.js`).
+const scratchDir = require('./scratch').root;
 const { Store } = require('../src/store');
 const { Engine, DEFAULTS } = require('../src/engine');
 const reclaim = require('../src/reclaim');
@@ -14,7 +18,7 @@ const wallet = {
 };
 
 function engine(overrides = {}) {
-  const store = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'wallet-')), 's.json', DEFAULTS);
+  const store = new Store(fs.mkdtempSync(path.join(scratchDir, 'wallet-')), 's.json', DEFAULTS);
   store.set({ mode: 'live', buyAmountSol: 0.001, priorityFeeSol: 0.00005, ...overrides });
   const e = new Engine(wallet, store);
   clearInterval(e._bal);
