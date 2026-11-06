@@ -151,6 +151,7 @@ notarization are described in **[docs/BUILD.md](docs/BUILD.md)**.
 | --- | --- |
 | [Install and run](docs/INSTALL.md) | Exact steps and fixes for Windows, macOS and Linux |
 | [Comparison](docs/COMPARISON.md) | Capability by capability against the other open-source pump.fun bots, including where we lose |
+| [Measured latency](docs/LATENCY.md) | What the feed actually receives on a real machine, with the script that measured it |
 | [Settings reference](docs/SETTINGS.md) | Every number the app has, what it does, and why the percentages are net |
 | [Architecture](docs/ARCHITECTURE.md) | How the engine, feeds and safety layers fit together |
 | [Backtesting](docs/BACKTESTING.md) | Replaying a recorded session |

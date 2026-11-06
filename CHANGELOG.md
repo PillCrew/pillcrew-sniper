@@ -3,6 +3,30 @@
 All notable changes to this project are recorded here. The format follows Keep a Changelog and the
 project uses semantic versioning.
 
+## [1.0.9] - 2026-11-06
+
+### The feed was slow because the socket was refused, and nobody was told
+
+Measured on a live machine (`node scripts/latency.js`, documented in [docs/LATENCY.md](docs/LATENCY.md)): the configured
+socket `wss://ws.eu.fluxrpc.com` — exactly as the provider's panel prints it — answers **401** without the key its HTTP
+endpoint carries, so the desk fell back to public nodes and read a feed that delivered **22.9 events/s** against
+**56.5/s** on the keyed socket, arriving **p50 19.3 seconds later** for the same transaction signatures. That is what
+"the bot is late" looked like from the outside.
+
+- The key is now copied to the socket automatically, as the same `name=value` pair the RPC URL uses: `?key=` for
+  FluxRPC, `?api-key=` for Helius, and a socket that already has a key is never touched.
+- A feed that lands on a public node while a private one is configured says so once a minute, with the hostname, so a
+  refused socket can never be invisible again.
+- `scripts/latency.js` measures it anywhere: two doors, matched by transaction signature, no clock sync, no wallet, no
+  key printed. Local decode cost measured at **4.2 µs per notification** — the decoder is not the bottleneck and never
+  was.
+
+- **A feed that can only watch twelve coins is a slow feed.** The automatic order used to prefer PumpDev whenever a key
+  existed; PumpDev caps a stream (its free plan allows 25 coins per IP, then it drops the watch list to 12 and says so in
+  the log). Automatic now prefers a Geyser endpoint, then the chain feed whenever this machine has a private socket or
+  node to read it from — the whole program, no per-coin limit — and only then PumpDev. PumpDev remains the fallback when
+  the chain feed cannot stream.
+
 ## [1.0.8] - 2026-11-06
 
 ### A Geyser-class feed, because the job is speed

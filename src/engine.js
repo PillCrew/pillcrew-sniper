@@ -694,10 +694,14 @@ class Engine extends EventEmitter {
     }
     const pumpdev = this._pumpdevUrl();
     if (src === 'pumpdev') return this._connectPortal(pumpdev, 'pumpdev');
-    // Automatic order: a configured Geyser endpoint first (it is the fastest door this app can be given), then PumpDev,
-    // then the public program logs.
+    // RULE CHANGED 2026-11-06 (1.0.9, measured): the automatic order used to prefer PumpDev whenever a key existed, and
+    // PumpDev caps how many coins a stream may watch (its free plan: 25 per IP, then it drops to 12 and says so). A
+    // sniper that can only watch twelve coins is slower than one watching the whole program. So: a Geyser endpoint
+    // first, then the chain feed when this machine has a private socket or node to read it from, then PumpDev, and the
+    // public nodes last. PumpDev also stays the safety net inside `_fallback`.
     if (src !== 'chain' && this._geyserWs()) return this._startChain(true);
-    if (src !== 'chain' && pumpdev) return this._connectPortal(pumpdev, 'pumpdev');
+    if (src !== 'chain' && (this._wsUrl(this.s.rpcWsUrl) || this.s.rpcUrl || this.s.rpcBackupUrl)) return this._startChain(false);
+    if (pumpdev) return this._connectPortal(pumpdev, 'pumpdev');
     this._startChain(false);
   }
 
@@ -714,7 +718,7 @@ class Engine extends EventEmitter {
     const geyser = geo === null ? Boolean(this._geyserWs()) : geo;
     const feed = new ChainFeed({
       customRpcs: [this.s.rpcUrl, this.s.rpcBackupUrl].filter(Boolean),
-      customWs: geyser ? this._geyserWs() : this.s.rpcWsUrl,
+      customWs: geyser ? this._geyserWs() : this._wsUrl(this.s.rpcWsUrl),
       geyser,
     });
     this.chain = feed;
@@ -724,17 +728,42 @@ class Engine extends EventEmitter {
     feed.on('event', (ev) => { this._lastEv = Date.now(); this.ingest(ev); });
     feed.on('status', (st) => {
       this.connected = st.connected;
-      if (st.connected) {
-        this._chainAt = Date.now();
-        const where = new URL(st.url.replace(/^wss?/, 'http')).hostname;
+      if (!st.connected) return;
+      this._chainAt = Date.now();
+      const where = new URL(st.url.replace(/^wss?/, 'http')).hostname;
+      const mine = Boolean(this.s.rpcWsUrl) || Boolean(this.s.rpcUrl);
+      const onPublic = /api\.mainnet-beta\.solana\.com|solana-rpc\.publicnode\.com/.test(st.url);
+      // A private socket that refused and let the desk fall onto a public node is the single most common reason a paid
+      // setup still feels slow, and it used to be invisible. Said once a minute, with the address, so it can be fixed.
+      if (onPublic && mine && (!this._pubWarnAt || Date.now() - this._pubWarnAt > 60000)) {
+        this._pubWarnAt = Date.now();
+        this._log('warn', `The feed is on a PUBLIC node (${where}), not on your own socket. A private socket that refuses (a missing key answers 401) leaves the desk slower than the one you paid for - check the WebSocket URL in Settings.`);
+      } else if (!onPublic) {
         this._log('ok', geyser
           ? `Reading Pump.fun through a Geyser stream (${where}): every transaction arrives with its logs, which is the same data as the public feed but closer to the validator.`
-          : 'Reading Pump.fun straight from the blockchain (' + where + ').');
+          : 'Reading Pump.fun straight from your own node (' + where + ').');
       }
     });
     feed.on('giveup', () => this._fallback(geyser ? 'the Geyser endpoint did not answer' : 'could not reach a node that allows log streaming'));
     feed.on('error', (e) => this._fallback(e.message));
     feed.start();
+  }
+
+  /**
+   * RULE ADDED 2026-11-06 (1.0.9, measured on a live configuration): a provider's socket often needs the same key its
+   * HTTP endpoint carries, and a socket URL pasted without it answers **401**. The desk then fell back to public nodes
+   * silently - a paid node, and the feed was the slowest one in the room. The key is copied across as the same
+   * name=value pair the RPC URL uses, so `?key=` for one provider and `?api-key=` for another both work, and a socket
+   * URL that already carries a key is never touched.
+   */
+  _wsUrl(raw) {
+    let url = String(raw || '').trim();
+    if (!url) return '';
+    if (!/^wss?:\/\//.test(url)) url = url.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
+    if (/[?&](api-key|key|token)=/.test(url)) return url;
+    const query = (String(this.s.rpcUrl || '').match(/[?&](api-key|key|token)=([^&\s]+)/));
+    if (!query) return url;
+    return url + (url.includes('?') ? '&' : '?') + query[1] + '=' + query[2];
   }
 
   /**

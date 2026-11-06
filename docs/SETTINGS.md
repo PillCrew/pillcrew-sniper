@@ -327,7 +327,7 @@ an address at all. Copy trading is off until an address is typed — the shipped
 | --- | --- | --- |
 | `geyserUrl` | empty | A Geyser-class transaction stream from your provider. Accepts `wss://`, `ws://`, `https://` or `http://`; `https` is upgraded to `wss`. Empty means the public program-log feed, exactly as before |
 | `geyserToken` | empty | The provider's token. Appended as `?api-key=` only when the URL carries no key of its own, so a URL that already has one is never doubled |
-| `feedSource` | `auto` | `auto` prefers a configured Geyser endpoint, then PumpDev, then the public chain feed. Forcing `geyser` with no endpoint says so in the log and falls back rather than pretending |
+| `feedSource` | `auto` | `auto` prefers a configured Geyser endpoint, then the chain feed when a private socket or node is set (the whole program, no per-coin limit), then PumpDev. Forcing `geyser` with no endpoint says so in the log and falls back rather than pretending |
 | --- | --- | --- |
 | `marketScan` | on | Run the rotating discovery doors |
 | `feedSource` | `auto` | `auto`, `pumpdev`, `chain`, `pumpportal` |

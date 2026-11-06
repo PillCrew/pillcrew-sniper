@@ -118,5 +118,48 @@ const { RPCManager, DEFAULT_ENDPOINTS, classify } = require('../src/rpc');
     await assert.rejects(() => m8.broadcast(Buffer.from('x'), { doors: 2 }), /400/);
   }
 
+  // RULE ADDED 2026-11-06 (1.0.9): a provider's socket needs the same key its HTTP endpoint carries, and a socket URL
+  // pasted without it answers 401 - after which the desk quietly used public nodes, which is the slowest feed in the room.
+  // The key is copied across as the same name=value pair the RPC URL uses, so FluxRPC (`?key=`) and Helius (`?api-key=`)
+  // both work, and a socket that already carries a key is left alone.
+  {
+    const { Engine } = require('../src/engine');
+    const ws = (settings, url) => Engine.prototype._wsUrl.call({ s: settings }, url);
+    assert.strictEqual(ws({ rpcUrl: 'https://eu.fluxrpc.com?key=ABC' }, 'wss://ws.eu.fluxrpc.com'), 'wss://ws.eu.fluxrpc.com?key=ABC', 'the key follows the socket');
+    assert.strictEqual(ws({ rpcUrl: 'https://mainnet.helius-rpc.com/?api-key=HEL' }, 'wss://atlas.mainnet.helius-rpc.com'), 'wss://atlas.mainnet.helius-rpc.com?api-key=HEL', 'and it keeps the provider\'s own name for it');
+    assert.strictEqual(ws({ rpcUrl: 'https://eu.fluxrpc.com?key=ABC' }, 'wss://ws.eu.fluxrpc.com?key=OWN'), 'wss://ws.eu.fluxrpc.com?key=OWN', 'a key already in the URL is never replaced');
+    assert.strictEqual(ws({ rpcUrl: '' }, 'wss://ws.eu.fluxrpc.com'), 'wss://ws.eu.fluxrpc.com', 'no key to copy, nothing added');
+    assert.strictEqual(ws({ rpcUrl: 'https://x.example?key=ABC' }, 'https://ws.x.example'), 'wss://ws.x.example?key=ABC', 'an https socket is upgraded and keyed in one step');
+    assert.strictEqual(ws({ rpcUrl: 'https://x.example?key=ABC' }, ''), '', 'no socket configured stays empty');
+  }
+
+  // RULE ADDED 2026-11-06 (1.0.9): PumpDev caps a stream (25 coins per IP on the free plan, then 12), so the automatic
+  // order asks for the full program first when this machine has a private socket or node to read it from. A key alone no
+  // longer wins over a feed that can watch every coin.
+  {
+    const { Engine, DEFAULTS } = require('../src/engine');
+    const { Store } = require('../src/store');
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const made = (patch) => {
+      const store = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'pc-feed-')), 's.json', { ...DEFAULTS, mode: 'paper', ...patch });
+      const e = new Engine({ exists: () => true, isUnlocked: () => true, address: () => 'W', keypair: null }, store);
+      for (const id of ['_loop', '_ui', '_pxTimer', '_bal', '_marketTimer', '_hotTimer', '_posTimer']) clearInterval(e[id]);
+      e.refreshBalance = () => {};
+      const picked = [];
+      e._startChain = (geo) => picked.push(geo === true ? 'geyser' : 'chain');
+      e._connectPortal = (url, label) => picked.push(label);
+      e._connect();
+      return picked[0] || 'nothing';
+    };
+    const KEY = 'pumpdev-secret';
+    assert.strictEqual(made({ pumpdevKey: KEY }), 'pumpdev', 'a key alone is still the only door when nothing private is set');
+    assert.strictEqual(made({ pumpdevKey: KEY, rpcWsUrl: 'wss://ws.example.com' }), 'chain', 'a private socket beats a capped stream');
+    assert.strictEqual(made({ pumpdevKey: KEY, rpcUrl: 'https://rpc.example.com' }), 'chain', 'so does a private node');
+    assert.strictEqual(made({ pumpdevKey: KEY, rpcUrl: 'https://rpc.example.com', geyserUrl: 'wss://geyser.example.com', geyserToken: 't' }), 'geyser', 'and Geyser beats both');
+    assert.strictEqual(made({ pumpdevKey: KEY, feedSource: 'pumpdev', rpcWsUrl: 'wss://ws.example.com' }), 'pumpdev', 'an explicit choice is still honoured');
+  }
+
   console.log('RPCManager tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -216,7 +216,7 @@ class ChainFeed extends EventEmitter {
         if (this.seen.size >= 4096) this.seen.delete(this.seen.values().next().value);
         this.seen.add(sig);
       }
-      for (const event of events) { this.count++; this.emit('event', event); }
+      for (const event of events) { this.count++; event.sig = sig || undefined; this.emit('event', event); }
       return;
     }
     if (m.method !== 'logsNotification') return;
@@ -248,7 +248,7 @@ class ChainFeed extends EventEmitter {
     if (frames.length || !accepted.length) return;
     if (this.seen.size >= 4096) this.seen.delete(this.seen.values().next().value);
     this.seen.add(v.signature);
-    for (const event of accepted) { this.count++; this.emit('event', event); }
+    for (const event of accepted) { this.count++; event.sig = v.signature; this.emit('event', event); }
   }
 }
 

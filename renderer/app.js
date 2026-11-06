@@ -820,7 +820,7 @@
         ['pumpdev', 'PumpDev (trades + launches)'],
         ['chain', 'Blockchain only (needs good RPC)'],
         ['pumpportal', 'PumpPortal (launches only)'],
-      ].map(([v, l]) => h('option', { value: v, selected: settings.feedSource === v }, l))), h('span', {}, 'Automatic uses a Geyser endpoint when you set one, then PumpDev with a key, otherwise Solana program logs. PumpPortal provides launch discovery if the chain feed fails.')));
+      ].map(([v, l]) => h('option', { value: v, selected: settings.feedSource === v }, l))), h('span', {}, 'Automatic uses a Geyser endpoint when you set one, then your own socket or node (the full Pump.fun program, no per-coin limit), then PumpDev with a key. PumpPortal provides launch discovery if the chain feed fails.')));
     // Copy trading: follow a wallet's BUYS. Its own row, because the value is a list of addresses, not a number.
     form.append(h('label', { class: 'field', style: 'grid-column: 1 / -1' }, h('span', {}, 'Copy these wallets (optional)'),
       h('textarea', { rows: '2', 'data-key': 'copyWallets', spellcheck: 'false', placeholder: 'One or more Solana addresses, separated by spaces or new lines' }, String(settings.copyWallets || '')),
