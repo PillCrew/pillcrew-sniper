@@ -1463,7 +1463,32 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     await e2._buy(t2, { score: 90, m: { buyers: 20 }, pass: true });
     assert.ok(e2.positions.has('FINE'), 'a 0.02 SOL ticket with the same tip goes through');
 
-    // RULE CHANGED 2026-11-05: the ceiling is a SETTING (`maxRoundTripPct`) instead of a constant, but it can never be
+    // RULE ADDED 2026-11-06 (1.1.1): a practice fill books the price the buy line printed, not whatever the coin had
+  // moved to while the fill was "waiting". Measured on a live practice run: the line said mc 178, the exit said mc 155,
+  // and the trade was booked at -39.9% - an invented loss of twenty-odd points that every exit rule then measured from.
+  {
+    const e = engine({ buyAmountSol: 0.1, paperBaseSlippagePct: 1, paperUnknownImpactPct: 2 });
+    e.walletBalance = 5; e._freeSol = () => 5; e._freeSol = () => 5;
+    const lines = [];
+    e._log = (level, msg) => lines.push(msg);
+    e._paperWait = async () => {};
+    e._entryPrice = async () => ({ mc: 178, src: 'curve' });
+    const t = { mint: 'MOVED', symbol: 'MOVED', mc: 178, score: 90, status: 'watching', createdAt: Date.now() - 60000, trades: [], mcHist: [], lastActivity: Date.now(), sources: new Set(['launch']) };
+    e.tokens.set('MOVED', t);
+    // The coin runs while the simulated fill is in flight: exactly the case that manufactured the fake loss.
+    e._paperWait = async () => { t.mc = 258; };
+    await e._buy(t, { score: 90, m: { buyers: 20 }, pass: true });
+    const p = e.positions.get('MOVED');
+    assert.ok(p, 'the practice entry happened');
+    assert.ok(p.entryMc < 190, `booked at the quoted price plus impact, got ${p.entryMc}`);
+    assert.ok(p.entryMc > 178, 'and with the depth impact added, not taken away');
+    assert.strictEqual(p.mc, p.entryMc, 'the position starts at the price it paid');
+    assert.ok(Math.abs(p.peakMc - p.entryMc) < 1e-9, 'and the peak starts there too');
+    const line = lines.find((l) => /^Buying/.test(l));
+    assert.match(line, /mc 1[78]\d/, 'the buy line prints the same number the books carry: ' + line);
+  }
+
+  // RULE CHANGED 2026-11-05: the ceiling is a SETTING (`maxRoundTripPct`) instead of a constant, but it can never be
     // switched off - a 5% floor, because a desk with no gate trades tickets whose tips are most of the ticket.
     const e3 = engine({ buyAmountSol: 0.001, priorityFeeSol: 0.0002, maxRoundTripPct: 60 });
     e3.walletBalance = 5; e3._freeSol = () => 5; e3._log = () => {}; e3._entryPrice = async () => ({ mc: 200, src: 'curve' });

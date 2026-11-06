@@ -1980,7 +1980,15 @@ class Engine extends EventEmitter {
     // A coin that was just bought has to be priced at its curve from the first second, not four seconds later when
     // the next scheduled sync runs: every exit rule is measured on that number.
     if (!paper && this._feedLabel === 'pumpdev') this._syncSubscriptions();
-    this._log('buy', `Buying ${t.symbol} (${t.mint.slice(0, 4)}) for ${sol} SOL (${ev.m.buyers} buyers, mc ${Math.round(px.mc)}`
+    // RULE CHANGED 2026-11-06 (1.1.1): the practice fill used to book `t.mc` - whatever the coin's price had become after
+    // the simulated wait - while this line printed `px.mc`. On a launch being bought *because* it was moving up, that
+    // gap booked an instant, invented loss of 10-40% and every exit rule then measured from a price nobody paid. Measured
+    // on a live practice run: entry mc 178 printed, exit 155, booked as -39.9%. A practice fill costs the quoted price
+    // plus the depth impact, and nothing else - so the number on this line, the number in the position and the number the
+    // rules measure from are now one number.
+    const paperSlip = paper ? this._paperSlippage(t, sol) : 0;
+    const bookedMc = px.mc * (1 + paperSlip);
+    this._log('buy', `Buying ${t.symbol} (${t.mint.slice(0, 4)}) for ${sol} SOL (${ev.m.buyers} buyers, mc ${Math.round(bookedMc)}`
       + `${s.simpleMode ? ', simple plan' : `, score ${ev.score}`}`
       // A board price is the risky one: it is somebody else's row, and the pool is the market. Naming it costs one
       // word and answers "why did it stop out at once" without anybody having to read the log of a coin that is gone.
@@ -1991,7 +1999,11 @@ class Engine extends EventEmitter {
     try {
       if (paper) {
         await this._paperWait();
-        p.entryMc = (Number(t.mc) || px.mc) * (1 + this._paperSlippage(t, sol));
+        // The same number the buy line printed: the quoted price plus the depth impact, never a price the coin moved to
+        // while the fill was waiting (see `paperSlip` where the line is written).
+        p.entryMc = bookedMc;
+        p.mc = bookedMc;
+        p.peakMc = Math.max(Number(p.peakMc) || 0, bookedMc);
         const debit = sol * (1 + FEE) + feeBuy;
         if (!this.running || this.s.mode !== 'paper' || this.paper.balance < debit) {
           throw Object.assign(new Error('Practice entry cancelled before fill'), { phase: 'build', definite: true });
