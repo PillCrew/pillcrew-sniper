@@ -272,6 +272,10 @@ class Engine extends EventEmitter {
     // The record of what was booked survives a restart, because a panel that forgets the day's profit and loss makes
     // an operator trade blind - and every restart used to do exactly that.
     this._loadBook();
+    // RULE ADDED 2026-11-06 (1.1.1): the bankroll is part of the book. It used to be rebuilt as 5.000 on every start, under
+    // a Profit / Loss figure that had been restored - two numbers on one card that could not both be true.
+    const savedPaper = Number(this.s.paperBalance);
+    if (Number.isFinite(savedPaper) && savedPaper > 0) this.paper.balance = savedPaper;
     this.stats = { seen: 0, lastLatencyMs: null, lastSellMs: null, reclaimedSol: 0, launches: 0, feeSpentSol: 0, orderFails: 0, entryPx: { curve: 0, board: 0, refused: 0 } };
     // Said in the log panel, once, when the settings file was damaged or unreadable: the app is then running on
     // defaults, and that is something the person has to know before pressing Start.
@@ -443,6 +447,9 @@ class Engine extends EventEmitter {
   resetPractice() {
     this.paper.balance = 5;
     this.resetStats('paper');
+    // RULE ADDED 2026-11-06 (1.1.1): a Reset must survive a restart. The bankroll is part of the saved book now, so a
+    // reset that only changed the number in memory would be undone by the next Start.
+    this._persistPositions();
   }
 
   /** Entries were paused by the desk itself (a cold streak, or selling everything by hand). The keeper may undo that:
@@ -527,9 +534,13 @@ class Engine extends EventEmitter {
     // that the panel has something new to draw (a position opened, closed or was restored).
     this._pxDirty = true;
     const live = [...this.positions.values()]
-      .filter((p) => !p.paper)
+      // RULE CHANGED 2026-11-06 (1.1.1): practice positions are persisted too. They used to be dropped, so a restart
+      // silently closed every open paper trade - the balance reset to 5.000 while Profit / Loss kept the realised
+      // figure, and the two numbers disagreed on screen. A paper position has no wallet token to verify against, so the
+      // restore path skips that check for it instead of throwing the row away.
       .map((p) => ({
         mint: p.mint, symbol: p.symbol, entryMc: p.entryMc, mc: p.mc, peakMc: p.peakMc, solIn: p.solIn,
+        paper: Boolean(p.paper),
         pxEntry: p.pxEntry || null,
         feeBuy: p.feeBuy, feeExitEst: p.feeExitEst, openedAt: p.openedAt, tp1Done: Boolean(p.tp1Done), sig: p.sig || null,
         adopted: Boolean(p.adopted), graduated: Boolean(p.graduated),
@@ -538,7 +549,7 @@ class Engine extends EventEmitter {
         pendingSellPct: p.pendingSellPct || 100,
         entryLiquidityUsd: p.entryLiquidityUsd ?? null, entryDexId: p.entryDexId || null,
       }));
-    try { this.store.set({ openPositions: live }); } catch (_) { /* a full disk is not a reason to stop trading */ }
+    try { this.store.set({ openPositions: live, paperBalance: Number(this.paper.balance) || 0 }); } catch (_) { /* a full disk is not a reason to stop trading */ }
   }
 
   async _restorePositions() {
@@ -547,8 +558,10 @@ class Engine extends EventEmitter {
     let missing = 0;
     for (const rec of saved) {
       if (!rec || !rec.mint || this.positions.has(rec.mint)) continue;
-      const held = await this._tokenBalanceRaw(rec.mint).catch(() => null);
-      if (held === 0n && !rec.pendingBuy && !rec.pendingSellSig) { missing++; continue; }
+      // A practice position has no token in the wallet: it is restored on the record alone, because the alternative is
+      // silently closing a trade the user is still watching (and resetting the bankroll under a Profit / Loss figure).
+      const held = rec.paper ? null : await this._tokenBalanceRaw(rec.mint).catch(() => null);
+      if (!rec.paper && held === 0n && !rec.pendingBuy && !rec.pendingSellSig) { missing++; continue; }
       const now = Date.now();
       this.positions.set(rec.mint, {
         mint: rec.mint, symbol: rec.symbol || rec.mint.slice(0, 4), name: rec.symbol || '',
@@ -561,9 +574,9 @@ class Engine extends EventEmitter {
         solIn: Number(rec.solIn) || this.s.buyAmountSol, feeBuy: Number(rec.feeBuy) || 0,
         // A restored position keeps the exit tip it was priced with, or gets today's if the record predates the field.
         feeExitEst: Number(rec.feeExitEst) || this._feeFor(true),
-        openedAt: Number(rec.openedAt) || now, status: 'open', closing: false, paper: false,
+        openedAt: Number(rec.openedAt) || now, status: 'open', closing: false, paper: Boolean(rec.paper),
         bookedAt: now,
-        fails: 0, nextTry: 0, pending: held === null, tp1Done: Boolean(rec.tp1Done), sig: rec.sig,
+        fails: 0, nextTry: 0, pending: held === null && !rec.paper, tp1Done: Boolean(rec.tp1Done), sig: rec.sig,
         tokIn: rec.pendingSellSig && /^\d+$/.test(rec.tokIn) ? BigInt(rec.tokIn) : held, adopted: Boolean(rec.adopted), graduated: Boolean(rec.graduated),
         pendingSell: rec.pendingSellSig ? { sig: rec.pendingSellSig, raw: null } : null, sellSig: rec.sellSig || null,
         pendingBuy: Boolean(rec.pendingBuy),
@@ -2011,6 +2024,9 @@ class Engine extends EventEmitter {
         this.paper.balance -= debit;
         p.status = 'open';
         p.pending = false;
+        // RULE ADDED 2026-11-06 (1.1.1): the book and the bankroll are written in the same breath, because a stored
+        // position whose cost was never subtracted is a restart that hands the money back.
+        this._persistPositions();
       } else {
         const place = (slippage, via) => (via === 'backup'
           ? this._backupTrade('buy', t.mint, sol, { slippage })

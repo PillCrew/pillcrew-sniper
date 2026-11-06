@@ -142,11 +142,18 @@ anchored to the last stream price so the card never jumps.
 
 ## Restart
 
-Real positions are written to `openPositions` in the settings file on every change, and the closed-trade
+Open positions are written to `openPositions` in the settings file on every change, and the closed-trade
 book to `bookHistory` with the running totals beside it. On the next Start each saved position is checked
 against the wallet: coins that are there are adopted into the book and managed by the normal exit rules,
 coins that are not are dropped. A closed window therefore costs the time the app was shut, not the
 position - and not the day's numbers either.
+
+Practice positions are saved the same way, together with the practice bankroll in `paperBalance`, because a
+practice trade was paid for out of that bankroll: restoring one without the other would show a Profit / Loss
+figure that no balance on the card could explain. A practice row has no token in the wallet, so the restore
+path never asks the chain about it - asking is exactly how a paper position used to be mistaken for a closed
+one. Both `openPositions` and `paperBalance` are the engine's own records on disk; the settings form cannot
+write either.
 
 ## Failure handling
 

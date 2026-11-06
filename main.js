@@ -194,8 +194,9 @@ app.whenReady().then(() => {
       // floor keeps a typo from turning the desk into a machine that pays its own tips.
       minTokenAgeSec: [0, 86400], maxTokenAgeSec: [0, 86400], maxRoundTripPct: [5, 90],
     };
-    // `openPositions` is the engine's own book on disk. The renderer must never be able to rewrite it.
-    const INTERNAL = new Set(['openPositions']);
+    // The engine's own book on disk: the open positions and the practice bankroll that paid for them. The renderer must
+    // never be able to rewrite either - a settings form is not a money transfer.
+    const INTERNAL = new Set(['openPositions', 'paperBalance']);
     for (const [k, v] of Object.entries(patch || {})) {
       if (!allowed.includes(k) || INTERNAL.has(k)) continue;
       const want = typeof DEFAULTS[k];

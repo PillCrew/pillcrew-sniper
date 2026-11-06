@@ -3,6 +3,51 @@
 All notable changes to this project are recorded here. The format follows Keep a Changelog and the
 project uses semantic versioning.
 
+## [1.1.1] - 2026-11-06
+
+### A practice trade used to invent its own losses
+
+Found by auditing a live practice session instead of trusting the code: two numbers on the same card could not both be
+true. A position opened with the buy line printing **mc 178** and closed at **mc 155** — a 13% fall — was booked as
+**−39.9%**. The cause was one line: the practice fill re-read the coin's price after the simulated delay and booked
+*that*, while the entry price every exit rule measured from was the one the buy line had printed. On a coin being bought
+*because* it was moving fast, the gap was the whole move, and it was invented.
+
+- **The practice fill books the price the buy line prints.** The quote plus the depth impact is now one number, and it is
+  the number in the log, in the position, and in every exit rule.
+- **A fall books the move plus the costs, and never more.** A test takes a practice position through a −40% fall and
+  refuses a booked loss outside −40…−60%: the round trip cannot be dearer than its own fees plus the impact.
+- Measured on a live practice session afterwards: the booked result is the price move plus a steady −6.4 to −8.7 points
+  of costs on every close, which is the arithmetic the Settings page describes.
+
+### A restart no longer closes a practice trade or resets the money
+
+Before this fix: one open practice position and a balance of **5.047** before restart; `open: []` and a balance of
+**5.000** after it, under a Profit / Loss figure that had been restored. Practice positions were deliberately left out of
+the saved book, and the bankroll was rebuilt from the default on every start.
+
+- Practice positions are saved, restored, and still managed by the normal exit rules; the practice bankroll
+  (`paperBalance`) is written **in the same breath**, so a restored position can never sit above a balance that paid
+  nothing for it.
+- A practice row has no token in the wallet, so the restore path never asks the chain about it — asking is exactly how a
+  paper position used to look closed.
+- `test/modules.test.js` proves it across a full rebuild of the engine from the same settings file, and each half of the
+  fix was reverted in turn to confirm the test fails without it.
+
+### The connection doctor stops crying wolf
+
+It reported *"the feed will use public nodes"* on a configuration that was working, because it only looked at the socket
+address typed into Settings and ignored the one the app derives from the node address (a `wss://` copy of the `https://`
+URL, with the same key). A doctor that warns about nothing trains you to ignore it.
+
+- The derived socket is checked as well, labelled *"(derived from your node address)"*.
+- The two node lines now report the desk's own live view — which endpoint is in a penalty box, and which host is covering
+  for it — so a throttled free node reads as a throttled free node instead of a mystery.
+
+### Smaller
+
+- The 3D decoration behind the panel is dimmed to 32%, so it stops covering the text it sits behind.
+
 ## [1.1.0] - 2026-11-06
 
 ### "Test my connection": the check that should have existed before the bug

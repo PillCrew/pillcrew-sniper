@@ -209,6 +209,10 @@ counted per book, and each can be reset on its own in Settings. Resetting clears
 closed trades of that book; open positions are left alone and nothing on chain is touched. Both books are
 written to `settings.json` (`bookHistory`, `books`), so they survive a restart, and a Reset stays reset.
 
+Practice positions survive a restart too, and so does the practice bankroll (`paperBalance`) that paid for
+them: the two are written together, so a restart cannot show a restored Profit / Loss above a balance that
+was reset to 5.000. A closing trade still costs what it cost, whichever window it happened in.
+
 **Profit / Loss in Real Money is the wallet, and it is measured as money**: what the wallet holds plus what
 the open coins are worth at their current price (and the rent their accounts hold), against the same sum at
 Start. The card says **since Start** for that reason. Coins already held when the bot starts are counted on

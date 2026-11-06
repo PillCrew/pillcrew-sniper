@@ -640,6 +640,81 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
   assert.strictEqual(e.logs.length, full, 'a full book has nothing to explain');
   for (const k of ['m1', 'm2', 'm3', 'm4', 'm5', 'm6']) { e.positions.delete(k); e.tokens.delete(k); }
 
+  // RULE ADDED 2026-11-06 (1.1.1): a restart must not silently close a practice trade or reset the bankroll under a
+  // restored Profit / Loss. The book and the money are written and read together.
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-restart-'));
+    const st1 = new Store(dir, 's.json', DEFAULTS);
+    st1.set({ mode: 'paper', paperLatencyMs: 0, paperBaseSlippagePct: 0, paperUnknownImpactPct: 0 });
+    const a = new Engine(wallet, st1);
+    clearInterval(a._bal); clearInterval(a._ui);
+    a.refreshBalance = () => {};
+    a._log = () => {};
+    a._measureProceeds = async () => null;
+    a._entryPrice = async () => ({ mc: 200, src: 'curve' });
+    const t = { mint: 'PAPERKEEP', symbol: 'PAPERKEEP', name: 'p', mc: 200, score: 90, status: 'watching', createdAt: Date.now() - 60000, trades: [], mcHist: [], lastActivity: Date.now(), sources: new Set(['launch']) };
+    a.tokens.set(t.mint, t);
+    a.running = true;
+    await a._buy(t, { score: 90, m: { buyers: 20 }, pass: true });
+    const spent = a.paper.balance;
+    assert.ok(a.positions.has('PAPERKEEP'), 'the practice entry happened (' + (t.reason || 'no reason given') + ')');
+    assert.ok(spent < 5, 'and it cost the bankroll something: ' + spent);
+    const saved = st1.get();
+    assert.ok(Array.isArray(saved.openPositions) && saved.openPositions.some((r) => r.mint === 'PAPERKEEP' && r.paper), 'the paper position is on disk');
+    assert.ok(Math.abs(Number(saved.paperBalance) - spent) < 1e-9, `the bankroll is on disk too (${saved.paperBalance} against ${spent})`);
+
+    // A new process on the same store: the position and the money come back together.
+    const st2 = new Store(dir, 's.json', DEFAULTS);
+    const b = new Engine(wallet, st2);
+    clearInterval(b._bal); clearInterval(b._ui);
+    b.refreshBalance = () => {};
+    b._log = () => {};
+    // A practice row has no token in the wallet, so the restore must not ask the chain about it at all: asking is how a
+    // paper position used to be mistaken for a closed one.
+    let walletReads = 0;
+    b._tokenBalanceRaw = async () => { walletReads++; return 0n; };
+    await b._restorePositions();
+    assert.strictEqual(walletReads, 0, 'a practice position is restored without a wallet check');
+    assert.ok(b.positions.has('PAPERKEEP'), 'the practice position survived the restart');
+    assert.strictEqual(b.positions.get('PAPERKEEP').paper, true, 'and it is still a practice position');
+    assert.ok(Math.abs(b.paper.balance - spent) < 1e-9, `with the same bankroll (${b.paper.balance} against ${spent})`);
+
+    // A restored practice position is not a museum piece: the exit rules manage it exactly like one bought in this
+    // window, and its proceeds land back in the restored bankroll.
+    const balanceBeforeSale = b.paper.balance;
+    b.running = true;
+    const rp = b.positions.get('PAPERKEEP');
+    const rt = b.tokens.get('PAPERKEEP');
+    // A price from the stream, the way a running desk sees one: `_onTrade` prices the position from the tape, and the
+    // rules are then read on the next tick. Twice, because a jump up gets a second look before it is believed.
+    rt.lastStreamAt = Date.now();
+    rt.mc = rp.entryMc * 2;
+    b._pricePosition(rp, Date.now());
+    b._pricePosition(rp, Date.now());
+    b._tick();
+    // The shipped plan asks a target to hold for 400 ms AND a fresh print before it fires: the price is printed again,
+    // as the stream does four times a second, and the rule is read on that new number.
+    await new Promise((r) => setTimeout(r, 450));
+    b._pricePosition(rp, Date.now());
+    b._tick();
+    await new Promise((r) => setTimeout(r, 60));
+    assert.ok(!b.positions.has('PAPERKEEP'), 'a restored practice position is closed by its own target (' + (rp.reason || 'still open at ' + Math.round(rp.mc)) + ')');
+    assert.ok(b.paper.balance > balanceBeforeSale, 'and the proceeds land in the restored bankroll');
+
+    // A Reset is a decision about the bankroll, so it has to outlive the window as well: reset, then restart, and the
+    // desk opens on 5.000 with an empty practice book - not on the money the reset was meant to clear.
+    b.resetPractice();
+    const st3 = new Store(dir, 's.json', DEFAULTS);
+    const c = new Engine(wallet, st3);
+    clearInterval(c._bal); clearInterval(c._ui);
+    c.refreshBalance = () => {};
+    c._log = () => {};
+    c._tokenBalanceRaw = async () => 0n;
+    await c._restorePositions();
+    assert.strictEqual(c.paper.balance, 5, 'the reset bankroll survived the restart');
+    assert.strictEqual(c.books.paper.trades, 0, 'and so did the cleared practice book');
+  }
+
   console.log('Modules test passed');
   process.exit(0);
 })().catch((err) => { console.error(err); process.exit(1); });
