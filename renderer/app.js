@@ -816,10 +816,11 @@
     form.append(h('label', { class: 'field' }, h('span', {}, 'Data feed'), h('select', { 'data-key': 'feedSource' },
       ...[
         ['auto', 'Automatic (best available)'],
+        ['geyser', 'Geyser stream (fastest, needs an endpoint)'],
         ['pumpdev', 'PumpDev (trades + launches)'],
         ['chain', 'Blockchain only (needs good RPC)'],
         ['pumpportal', 'PumpPortal (launches only)'],
-      ].map(([v, l]) => h('option', { value: v, selected: settings.feedSource === v }, l))), h('span', {}, 'Automatic uses PumpDev with a configured key, otherwise Solana program logs. PumpPortal provides launch discovery if the chain feed fails.')));
+      ].map(([v, l]) => h('option', { value: v, selected: settings.feedSource === v }, l))), h('span', {}, 'Automatic uses a Geyser endpoint when you set one, then PumpDev with a key, otherwise Solana program logs. PumpPortal provides launch discovery if the chain feed fails.')));
     // Copy trading: follow a wallet's BUYS. Its own row, because the value is a list of addresses, not a number.
     form.append(h('label', { class: 'field', style: 'grid-column: 1 / -1' }, h('span', {}, 'Copy these wallets (optional)'),
       h('textarea', { rows: '2', 'data-key': 'copyWallets', spellcheck: 'false', placeholder: 'One or more Solana addresses, separated by spaces or new lines' }, String(settings.copyWallets || '')),
@@ -835,6 +836,8 @@
     $('#rpcUrl').value = settings.rpcUrl || '';
     $('#rpcBackupUrl').value = settings.rpcBackupUrl || '';
     $('#rpcWsUrl').value = settings.rpcWsUrl || '';
+    $('#geyserUrl').value = settings.geyserUrl || '';
+    $('#geyserToken').value = settings.geyserToken || '';
     const rt = estimatedFees(settings);
     const plan = settings.simpleMode
       ? [`everything at +${settings.takeProfitPct}%`, `a stop at -${settings.stopLossPct}%`, 'half of any run past +20% is kept', `and nothing is held longer than ${settings.maxHoldSec} s`].join(', ')
@@ -876,6 +879,8 @@
     patch.rpcUrl = $('#rpcUrl').value.trim();
     patch.rpcBackupUrl = $('#rpcBackupUrl').value.trim();
     patch.rpcWsUrl = $('#rpcWsUrl').value.trim();
+    patch.geyserUrl = $('#geyserUrl').value.trim();
+    patch.geyserToken = $('#geyserToken').value.trim();
     try {
       settings = await call(api.setSettings(patch));
       $('#saveMsg').textContent = 'Saved';

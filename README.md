@@ -87,14 +87,16 @@ wallet in the picture was created for the screenshot and deleted with the profil
 Dexoryn, M8S, Dorado, Ferris, AllenHark) capability by capability, and names where we lose instead of hiding it.
 
 The short version: this is the only desktop product on that list — a window, a wallet inside it, Practice Mode,
-presets and a CI suite. It is **not** the fastest feed: Geyser gRPC and Jito ShredStream see a transaction earlier than
-the public log stream we decode, and this README will not pretend otherwise. Nobody on either side of that table has a
-verified profit figure.
+presets and a CI suite. Its feed can be pointed at a **Geyser-class transaction stream** from your own provider, which
+is the same program data closer to the validator; what it does not have is the binary Yellowstone gRPC client or Jito
+ShredStream, and this README will not pretend otherwise. Nobody on either side of that table has a verified profit
+figure.
 
 ## What is included
 
-- **Feeds** — Pump.fun program-log WebSocket decoding, PumpPortal, optional PumpDev, plus market discovery from the
-  boards, with fallback between doors and a named reason when one is rate limited.
+- **Feeds** — Pump.fun program-log WebSocket decoding, **a Geyser-class transaction stream from your own provider**
+  (`geyserUrl`), PumpPortal, optional PumpDev, plus market discovery from the boards, with fallback between doors and a
+  named reason when one is rate limited.
 - **Entries** — scoring, creator-sale detection, wallet concentration, mint/freeze authority checks on chain, token
   2022 screening, coin-age clocks, buyer and net-flow bars, per-minute pace and slot limits, and **copy trading**: type
   a wallet in Settings and its next buy is entered at once, still through every money guard.
@@ -119,6 +121,7 @@ All of these are optional and stay in `settings.json` on your own disk:
 | `jupiterKey` | A higher Jupiter price quota for the market scan |
 | `incineratorKey` | Bulk closure of empty token accounts |
 | `copyWallets` | One or more addresses to follow: their next **buy** is entered at once, past the score and buyer bars, through the usual money guards. Their sells are not mirrored |
+| `geyserUrl` / `geyserToken` | A Geyser-class transaction stream from your provider (`wss://` or `https://`, token appended as `?api-key=`). Faster than the public program-log feed; the desk falls back on its own if it stops answering |
 
 ## Tests
 

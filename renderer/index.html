@@ -219,6 +219,11 @@
             <label class="field wide"><span>Backup RPC URL (optional)</span><input id="rpcBackupUrl" type="text" placeholder="a second private node, used if the first one refuses" spellcheck="false"></label>
             <label class="field wide"><span>WebSocket URL (optional)</span><input id="rpcWsUrl" type="text" placeholder="wss://… - only when your provider's socket is on another host" spellcheck="false"></label>
           </div>
+          <div class="form-grid">
+            <label class="field wide"><span>Geyser endpoint (optional — the fastest data there is)</span><input id="geyserUrl" type="text" placeholder="wss://… or https://… - a provider that streams transactions (Yellowstone / LaserStream)" spellcheck="false"></label>
+            <label class="field wide"><span>Geyser token (optional)</span><input id="geyserToken" type="password" placeholder="appended to the endpoint as ?api-key=… when the URL has none" autocomplete="off" spellcheck="false"></label>
+          </div>
+          <p class="hint">A Geyser-class stream delivers each transaction with its logs, which is the same program data this app decodes — only closer to the validator, so a launch is seen sooner. Leave it empty and the desk uses the public program-log feed exactly as before; if the endpoint stops answering, the desk falls back on its own.</p>
           <div id="rpcList" class="rpc-list"></div>
         </details>
 

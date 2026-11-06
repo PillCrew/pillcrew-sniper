@@ -83,11 +83,27 @@ function decodeEvent(base64) {
   return null;
 }
 
+function decodeLogs(logs) {
+  const out = [];
+  for (const line of logs || []) {
+    const at = String(line).indexOf('Program data: ');
+    if (at < 0) continue;
+    const ev = decodeEvent(String(line).slice(at + 14).trim());
+    if (ev) out.push(ev);
+  }
+  return out;
+}
+
 class ChainFeed extends EventEmitter {
-  /** @param {{customRpc?: string, customRpcs?: string[], customWs?: string}} opts */
+  /** @param {{customRpc?: string, customRpcs?: string[], customWs?: string, geyser?: boolean}} opts */
   constructor(opts = {}) {
     super();
     this.customRpc = opts.customRpc || '';
+    // RULE ADDED 2026-11-06 (1.0.8, the owner: "ich boty mają Geyser i ShredStream, więc będą szybsze"): the same feed can
+    // now speak a provider's Geyser-class stream over WebSocket (`transactionSubscribe`) instead of `logsSubscribe`. The
+    // DECODER is the same one, unchanged - a Geyser notification carries `meta.logMessages`, so every event still comes
+    // from the program's own data, and only the transport (and therefore the latency) is better.
+    this.geyser = Boolean(opts.geyser);
     // The desk may hold two private nodes now; either one can serve the subscription, and the explicit socket wins.
     this.customRpcs = (opts.customRpcs || []).filter(Boolean);
     this.customWs = opts.customWs || '';
@@ -146,7 +162,17 @@ class ChainFeed extends EventEmitter {
     this.ws = ws;
     ws.on('open', () => {
       this.lastMsg = Date.now();
-      ws.send(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'logsSubscribe', params: [{ mentions: [PUMP_PROGRAM] }, { commitment: 'processed' }] }));
+      // A Geyser-class endpoint answers `transactionSubscribe`; a plain node answers `logsSubscribe`. Both deliver the
+      // program's own `Program data:` lines, which is what the decoder reads.
+      ws.send(JSON.stringify(this.geyser
+        ? {
+          jsonrpc: '2.0', id: 1, method: 'transactionSubscribe',
+          params: [
+            { accountInclude: [PUMP_PROGRAM], failed: false, vote: false },
+            { commitment: 'confirmed', encoding: 'jsonParsed', transactionDetails: 'full', showRewards: false, maxSupportedTransactionVersion: 0 },
+          ],
+        }
+        : { jsonrpc: '2.0', id: 1, method: 'logsSubscribe', params: [{ mentions: [PUMP_PROGRAM] }, { commitment: 'processed' }] }));
     });
     ws.on('message', (d) => { if (ws !== this.ws) return; this.lastMsg = Date.now(); this._onMessage(d.toString()); });
     ws.on('error', () => {});
@@ -174,6 +200,25 @@ class ChainFeed extends EventEmitter {
     let m; try { m = JSON.parse(raw); } catch (_) { return; }
     if (m.id === 1 && m.error) { this.fails = 99; this.emit('error', new Error(m.error.message || 'subscribe failed')); try { this.ws.terminate(); } catch (_) {} return; }
     if (m.id === 1 && typeof m.result === 'number') { this.connected = true; this.fails = 0; this.emit('status', { connected: true, url: this.url }); return; }
+    // A Geyser-class notification: the whole transaction with its meta. The decode path is still the program's own
+    // `Program data:` lines, so a provider that streams transactions needs no second decoder and no second set of rules -
+    // only a different envelope, and that is the whole point of the faster transport.
+    if (m.method === 'transactionNotification' || m.method === 'transaction' || m.method === 'blockNotification') {
+      const res = (m.params && m.params.result) || {};
+      const tx = res.transaction && res.transaction.transaction ? res.transaction.transaction : null;
+      const meta = res.meta || (res.transaction && res.transaction.meta) || {};
+      if (meta.err) return;
+      const sig = res.signature || (tx && Array.isArray(tx.signatures) ? tx.signatures[0] : null);
+      if (sig && this.seen.has(sig)) return;
+      const events = decodeLogs(meta.logMessages);
+      if (!events.length) return;
+      if (sig) {
+        if (this.seen.size >= 4096) this.seen.delete(this.seen.values().next().value);
+        this.seen.add(sig);
+      }
+      for (const event of events) { this.count++; this.emit('event', event); }
+      return;
+    }
     if (m.method !== 'logsNotification') return;
     const v = m.params && m.params.result && m.params.result.value;
     if (!v || v.err || !Array.isArray(v.logs)) return;
@@ -207,4 +252,4 @@ class ChainFeed extends EventEmitter {
   }
 }
 
-module.exports = { ChainFeed, decodeEvent, marketCapSol, b58, PUMP_PROGRAM };
+module.exports = { ChainFeed, decodeEvent, decodeLogs, marketCapSol, b58, PUMP_PROGRAM };

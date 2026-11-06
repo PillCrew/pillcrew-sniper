@@ -206,7 +206,19 @@ app.whenReady().then(() => {
         if (v < 0) throw new Error(`${k} cannot be negative`);
         const lim = LIMITS[k]; if (lim && (v < lim[0] || v > lim[1])) throw new Error(`${k} must be between ${lim[0]} and ${lim[1]}`);
       }
-      if (k === 'feedSource' && !['auto', 'chain', 'pumpdev', 'pumpportal'].includes(v)) throw new Error('Unknown data feed');
+      if (k === 'feedSource' && !['auto', 'chain', 'pumpdev', 'pumpportal', 'geyser'].includes(v)) throw new Error('Unknown data feed');
+      if (k === 'geyserUrl') {
+        const u = String(v || '').trim();
+        if (u && !/^(wss|ws|https|http):\/\//.test(u)) throw new Error('The Geyser endpoint must start with wss://, ws://, https:// or http://');
+        clean[k] = u;
+        continue;
+      }
+      if (k === 'geyserToken') {
+        const t = String(v || '').trim();
+        if (!/^[A-Za-z0-9._\-]{0,200}$/.test(t)) throw new Error('That Geyser token has invalid characters. Paste only the token.');
+        clean[k] = t;
+        continue;
+      }
       // A copy roster is a list of wallet addresses typed by hand: keep only the ones that could be a Solana address, and
       // refuse the whole save if nothing usable is left, instead of writing a list that silently follows nobody.
       if (k === 'copyWallets') {
@@ -234,7 +246,7 @@ app.whenReady().then(() => {
         clean[k] = v;
       }
     }
-    if (clean.feedSource && !['auto', 'chain', 'pumpdev', 'pumpportal'].includes(clean.feedSource)) delete clean.feedSource;
+    if (clean.feedSource && !['auto', 'chain', 'pumpdev', 'pumpportal', 'geyser'].includes(clean.feedSource)) delete clean.feedSource;
     if (clean.rpcUrl && !/^https:\/\//.test(clean.rpcUrl)) throw new Error('RPC URL must start with https:// (or leave empty for automatic)');
     if (clean.rpcBackupUrl && !/^https:\/\//.test(clean.rpcBackupUrl)) throw new Error('The backup RPC URL must start with https:// (or leave it empty)');
     if (clean.rpcWsUrl && !/^wss?:\/\//.test(clean.rpcWsUrl)) throw new Error('The WebSocket URL must start with wss:// (or leave it empty)');

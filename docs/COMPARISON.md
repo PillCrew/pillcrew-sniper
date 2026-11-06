@@ -33,7 +33,7 @@ Checked against the public READMEs on **2026-11-06**: Chainstack `pumpfun-bonkfu
 | Bring your own RPC / backup RPC / WS | ✅ `src/rpc.js`, `src/chain.js` | ✅ `.env` endpoints | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Program-log WebSocket decoding | ✅ `src/chain.js` | ✅ `logs` listener | — | — | — | — | — |
 | PumpPortal feed | ✅ `src/engine.js` (`feedSource: pumpportal`) | — | — | — | — | — | — |
-| Geyser / Yellowstone gRPC | ❌ | ✅ `geyser` listener | — | — | — | — | — |
+| Geyser / Yellowstone gRPC | ⚠️ a Geyser-class **WebSocket** stream (`transactionSubscribe`, `src/chain.js`), not the binary gRPC client | ✅ `geyser` listener | — | — | — | — | — |
 | Jito ShredStream (pre-execution) | ❌ (we have Jito **bundles** for sending, `src/jito.js`) | ✅ `shreds` listener | ✅ ShredStream + bundles | — | — | — | ✅ ShredStream |
 | pump.fun bonding curve trading | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | PumpSwap after graduation | ✅ | ✅ | ✅ | ✅ | — | ✅ | — |
@@ -55,8 +55,12 @@ Checked against the public READMEs on **2026-11-06**: Chainstack `pumpfun-bonkfu
 
 ## Where we lose, plainly
 
-1. **Data latency.** Geyser gRPC and ShredStream are closer to the validator than a public WebSocket. A coin seen 200 ms
-   earlier is a real advantage in a sniper, and no amount of UI makes up for it.
+1. **Data latency, narrowed but not closed.** A Geyser-class endpoint is now a first-class feed (`geyserUrl` in Settings,
+   `transactionSubscribe`, `src/chain.js`): the provider streams each transaction with its logs, so a launch is seen
+   sooner than on the public program-log feed, and the decoder is the same one either way. What we still do not have is
+   the **binary Yellowstone gRPC client** and **Jito ShredStream** (pre-execution data); ShredStream needs their proxy
+   agent, which is not something a signed desktop app can ship. So: we are no longer the slowest door in this table, and
+   we are not the fastest either.
 2. **Raydium and Meteora.** We trade pump.fun curves and PumpSwap pools. A coin that migrates to Raydium left our
    market.
 3. **Copy trading has a narrower promise than Dorado's.** We follow a wallet's *buys* and manage the exit ourselves; a
@@ -69,10 +73,13 @@ Checked against the public READMEs on **2026-11-06**: Chainstack `pumpfun-bonkfu
 
 In the order that would actually pay for itself:
 
-1. **An optional Yellowstone gRPC feed** behind `rpcUrl`-style settings: same scoring, same exits, earlier data. Needs a
-   provider endpoint to prove, and a key the user brings — the app must keep working without it.
+1. **The binary Yellowstone gRPC client** behind the same `geyserUrl` setting, so a provider that exposes only the gRPC
+   port can be used as well as one that exposes the transaction stream. Needs an endpoint to prove, and a pure-JS
+   transport: the current client ships native binaries for macOS and Linux only, and a Windows build that cannot load it
+   is worse than no client at all.
 2. **Post-migration trading** (Raydium CPMM / AMM and Meteora): the exits and the guards are already market-agnostic,
    the work is the pool math and the account layouts.
-3. **Alerts** (desktop notification when a position opens or closes) and a second submission route beside Jito.
+3. **Jito ShredStream** through a local proxy agent, if a proxy can be shipped in a way a desktop installer can manage.
+4. **Alerts** (desktop notification when a position opens or closes) and a second submission route beside Jito.
 
-None of these is started. Nothing above is a promise of profit.
+Nothing above is a promise of profit.

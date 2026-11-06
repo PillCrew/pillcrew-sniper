@@ -3,6 +3,31 @@
 All notable changes to this project are recorded here. The format follows Keep a Changelog and the
 project uses semantic versioning.
 
+## [1.0.8] - 2026-11-06
+
+### A Geyser-class feed, because the job is speed
+
+`geyserUrl` / `geyserToken` in Settings (and `feedSource: geyser`) let the desk read Pump.fun from a provider that
+streams **transactions with their logs** — the Geyser-class door Yellowstone and LaserStream expose — instead of the
+public program-log subscription. Automatic order is now: a configured Geyser endpoint, then PumpDev with a key, then the
+public chain feed.
+
+What this is and is not, stated plainly:
+
+- **Is:** the same decoder behind a faster envelope. A Geyser notification carries `meta.logMessages`, so every event
+  still comes from the program's own `Program data:` bytes; only the transport changed, and a launch is seen sooner.
+- **Is:** fail-safe. A bad or silent endpoint is named in the Activity log and the desk falls back on its own; with no
+  endpoint configured nothing changes at all.
+- **Is not:** the binary Yellowstone gRPC client. The official npm client ships native binaries for macOS and Linux
+  only — a Windows build that cannot load it is worse than no client. WebSocket is pure JavaScript on all three systems.
+- **Is not:** Jito ShredStream, which needs a separate proxy agent.
+
+`test/geyser.test.js` holds the whole mapping offline: a transaction notification becomes the same event as a log
+notification (price from the curve included), a replayed signature is counted once, a failed transaction is ignored, a
+provider that nests the payload differently still works, `https://` becomes `wss://`, a token is appended once, and an
+endpoint that is selected but empty says so and falls back. Both mutations — removing the notification branch, removing
+the upgrade — fail it.
+
 ## [1.0.7] - 2026-11-06
 
 ### Copy trading: follow a wallet's buys

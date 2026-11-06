@@ -148,6 +148,10 @@ const PROFILES = {
     maxDevBuySol: 12, maxDevHoldPct: 30, maxTraderSharePct: 40,
     maxChange5mPct: 0, minChange5mPct: 0, deepEntry: true, minHolders: 0, maxBuyers: 0,
     minTokenAgeSec: 0, maxTokenAgeSec: 0, maxRoundTripPct: 8,
+    // RULE ADDED 2026-11-06 (1.0.8): a Geyser-class endpoint (Yellowstone gRPC is served over the same WebSocket
+    // `transactionSubscribe` by the providers that offer it). Optional: with no URL the desk runs exactly as before, and
+    // the decoder is unchanged - only the transport, and therefore the latency, is better.
+    geyserUrl: '', geyserToken: '',
     // RULE ADDED 2026-11-06 (1.0.7): "sniping po dev wallet" / copy trading, the feature Dorado and Soldrift advertise.
     // A comma or newline separated list of base58 addresses. When one of them BUYS a coin we are watching, that coin is
     // entered at once - but only through the money guards every other entry goes through (slots, pace, cooldown, the cost
@@ -680,10 +684,21 @@ class Engine extends EventEmitter {
     this.wantWs = true;
     const src = this.s.feedSource;
     if (src === 'pumpportal' || this._portalOnly) return this._connectPortal(PUMPPORTAL_WS, 'pumpportal');
+    if (src === 'geyser') {
+      // Asked for explicitly and not configured: say so instead of quietly pretending the desk is on the fast stream.
+      if (!this._geyserWs()) {
+        this._log('warn', 'The Geyser stream is selected but no endpoint is set, so the desk is using the public blockchain feed instead (Settings → Geyser endpoint).');
+        return this._startChain(false);
+      }
+      return this._startChain(true);
+    }
     const pumpdev = this._pumpdevUrl();
     if (src === 'pumpdev') return this._connectPortal(pumpdev, 'pumpdev');
+    // Automatic order: a configured Geyser endpoint first (it is the fastest door this app can be given), then PumpDev,
+    // then the public program logs.
+    if (src !== 'chain' && this._geyserWs()) return this._startChain(true);
     if (src !== 'chain' && pumpdev) return this._connectPortal(pumpdev, 'pumpdev');
-    this._startChain();
+    this._startChain(false);
   }
 
   _pumpdevUrl() {
@@ -694,24 +709,44 @@ class Engine extends EventEmitter {
   }
 
   /** Primary feed: decode Pump.fun program logs straight from a Solana RPC websocket (no data API). */
-  _startChain() {
+  _startChain(geo = null) {
     if (this.chain) return;
+    const geyser = geo === null ? Boolean(this._geyserWs()) : geo;
     const feed = new ChainFeed({
       customRpcs: [this.s.rpcUrl, this.s.rpcBackupUrl].filter(Boolean),
-      customWs: this.s.rpcWsUrl,
+      customWs: geyser ? this._geyserWs() : this.s.rpcWsUrl,
+      geyser,
     });
     this.chain = feed;
-    this.feedSource = 'chain';
+    this.feedSource = geyser ? 'geyser' : 'chain';
     this._chainAt = Date.now();
     this._lastEv = 0;
     feed.on('event', (ev) => { this._lastEv = Date.now(); this.ingest(ev); });
     feed.on('status', (st) => {
       this.connected = st.connected;
-      if (st.connected) { this._chainAt = Date.now(); this._log('ok', 'Reading Pump.fun straight from the blockchain (' + new URL(st.url.replace(/^wss/, 'https')).hostname + ').'); }
+      if (st.connected) {
+        this._chainAt = Date.now();
+        const where = new URL(st.url.replace(/^wss?/, 'http')).hostname;
+        this._log('ok', geyser
+          ? `Reading Pump.fun through a Geyser stream (${where}): every transaction arrives with its logs, which is the same data as the public feed but closer to the validator.`
+          : 'Reading Pump.fun straight from the blockchain (' + where + ').');
+      }
     });
-    feed.on('giveup', () => this._fallback('could not reach a node that allows log streaming'));
+    feed.on('giveup', () => this._fallback(geyser ? 'the Geyser endpoint did not answer' : 'could not reach a node that allows log streaming'));
     feed.on('error', (e) => this._fallback(e.message));
     feed.start();
+  }
+
+  /**
+   * The Geyser-class socket, if one is configured. Accepts what providers actually hand out: `https://` (converted to
+   * `wss://`), `wss://` as-is, and a separate token that is appended as `?api-key=` when the URL carries no key.
+   */
+  _geyserWs() {
+    let url = String(this.s.geyserUrl || '').trim();
+    if (!url) return '';
+    const token = String(this.s.geyserToken || '').trim();
+    if (token && !/[?&](api-key|key|token)=/.test(url)) url += (url.includes('?') ? '&' : '?') + 'api-key=' + encodeURIComponent(token);
+    return url.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
   }
 
   _fallback(reason) {
