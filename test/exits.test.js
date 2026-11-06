@@ -1486,6 +1486,15 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     assert.ok(Math.abs(p.peakMc - p.entryMc) < 1e-9, 'and the peak starts there too');
     const line = lines.find((l) => /^Buying/.test(l));
     assert.match(line, /mc 1[78]\d/, 'the buy line prints the same number the books carry: ' + line);
+
+    // The other half of the same rule: a fall books the fall plus the costs, and never more than that. Before the fix a
+    // -13% move could book -40%, because the entry it was measured from was invented.
+    p.mc = p.entryMc * 0.6;                    // the coin fell 40% from what was paid
+    e._finishSell(p, 'Stop loss', e._feeFor(true), 100);
+    const row = e.history[0];
+    assert.ok(row, 'the sale was booked');
+    assert.ok(row.pnlPct <= -40, `the costs are inside a loss: ${row.pnlPct.toFixed(1)}%`);
+    assert.ok(row.pnlPct > -60, `and the loss is the move plus costs, not double of it: ${row.pnlPct.toFixed(1)}% for a -40% move`);
   }
 
   // RULE CHANGED 2026-11-05: the ceiling is a SETTING (`maxRoundTripPct`) instead of a constant, but it can never be
