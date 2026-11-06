@@ -30,13 +30,19 @@ try {
 
 const doors = [{ name: 'public', ws: '' }];
 // The same key derivation the desk uses: a socket URL pasted without the provider's key answers 401 and the desk falls
-// back to a public node - that is the mistake this script must not repeat while measuring.
+// back to a public node - that is the mistake this script must not repeat while measuring. With no socket typed in,
+// the address is derived from the node URL, exactly as the desk derives it: measuring only the public door on a
+// machine that actually trades through a private socket answers a question nobody asked.
 const { Engine } = require('../src/engine');
-const derived = Engine.prototype._wsUrl.call({ s: settings }, settings.rpcWsUrl);
+const derived = Engine.prototype._wsUrl.call({ s: settings }, settings.rpcWsUrl || settings.rpcUrl);
 if (derived) doors.push({ name: 'your socket', ws: derived });
 
 const seen = new Map();   // sig -> { [door]: arrival ms }
 const stats = new Map();  // door -> { events, decodeUs, connectedAt, url }
+
+// A socket address can carry the provider's key, and this script's whole point is that it prints no secret: a
+// measurement that pastes the key into a terminal, a screenshot or a bug report is a leak, not a benchmark.
+const mask = (url) => String(url || '').replace(/([?&](?:api-key|key|token)=)[^&\s]+/gi, '$1***');
 const feeds = [];
 
 function record(door, events, decodeUs) {
@@ -87,7 +93,7 @@ setTimeout(() => {
   for (const d of doors) {
     const st = stats.get(d.name) || { events: 0 };
     const rate = (st.events / (SUITES / 1000)).toFixed(1);
-    console.log(`${d.name.padEnd(12)}          ${String(st.events).padStart(6)} events  ${rate.padStart(6)}/s   ${st.url || '(no socket)'}`);
+    console.log(`${d.name.padEnd(12)}          ${String(st.events).padStart(6)} events  ${rate.padStart(6)}/s   ${mask(st.url) || '(no socket)'}`);
   }
   const pairs = [];
   for (const [, row] of seen) {

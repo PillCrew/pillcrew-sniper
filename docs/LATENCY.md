@@ -62,9 +62,14 @@ a public node while a private one is configured, the Activity log says so once a
 ## Reproduce it
 
 1. Settings → **WebSocket URL**: your provider's socket (a private node's socket, or a Geyser-class endpoint which the
-   desk prefers automatically).
+   desk prefers automatically). Leave it empty and the address is derived from your node URL, key included — the same
+   derivation the desk uses, so a measurement can no longer show only the public door on a machine that trades through a
+   private socket.
 2. Settings → **Test my connection** first: it opens each address once and says what it answered. A ✕ there is the
    problem, not the bot.
 3. `node scripts/latency.js 120` from the repository.
 4. Compare the two rows. If your socket is not the faster one by a clear margin, the problem is the socket or the
    provider — not the bot.
+
+The key is printed as `?api-key=***`: the report is meant to be pasted into a message without handing anybody the
+credential.

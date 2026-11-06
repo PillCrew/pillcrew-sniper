@@ -49,6 +49,10 @@ URL, with the same key). A doctor that warns about nothing trains you to ignore 
 
 ### Smaller
 
+- `node scripts/latency.js` now measures **your own socket** even when the socket field is empty: it derives the address
+  from the node URL with the same key the desk derives, so the two doors are always compared. On the machine this was
+  verified on, the private socket was earlier by **p50 2.3 s** (mean 2.4 s, p95 4.8 s) over a 45-second window. The key
+  is printed as `?api-key=***`, because a report that carries a credential is a leak.
 - The 3D decoration behind the panel is dimmed to 32%, so it stops covering the text it sits behind.
 
 ## [1.1.0] - 2026-11-06
