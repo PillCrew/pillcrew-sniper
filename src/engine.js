@@ -452,7 +452,7 @@ class Engine extends EventEmitter {
     this._persistPositions();
   }
 
-  /** Entries were paused by the desk itself (a cold streak, or selling everything by hand). The keeper may undo that:
+  /** Entries were paused by the desk itself (a cold streak, or selling everything by hand). The operator may undo that:
    *  the streak counter starts again too, so the same five losses cannot put it straight back. */
   resumeEntries() {
     const was = this.pausedUntil;
@@ -513,6 +513,11 @@ class Engine extends EventEmitter {
       // rule about spending, never about being able to sell. If there is nothing for the fee, it is said in words.
       if (this.positions.size && this.walletBalance < EXIT_FEE_FLOOR_SOL) this._warnNoFeeSol();
     }
+    // RULE ADDED 2026-11-06 (1.1.1): a practice position saved by the last session comes back when the desk starts
+    // again. Practice positions used to be written to disk and never read back, because the only restore path ran for
+    // real money - where the tokens are in the wallet to be checked. A practice row has no token, and this path asks the
+    // chain about nothing.
+    if (s.mode !== 'live') await this._restorePositions();
     this.running = true;
     this.books[this.s.mode === 'live' ? 'live' : 'paper'].sessionPnl = 0;
     this._log('info', s.mode === 'live' ? 'Bot started in REAL MONEY mode.' : 'Bot started in Practice Mode (no real money).');
@@ -533,7 +538,7 @@ class Engine extends EventEmitter {
     // Every structural change to the book goes through here, so this is also where the fast position feed is told
     // that the panel has something new to draw (a position opened, closed or was restored).
     this._pxDirty = true;
-    const live = [...this.positions.values()]
+    const mine = [...this.positions.values()]
       // RULE CHANGED 2026-11-06 (1.1.1): practice positions are persisted too. They used to be dropped, so a restart
       // silently closed every open paper trade - the balance reset to 5.000 while Profit / Loss kept the realised
       // figure, and the two numbers disagreed on screen. A paper position has no wallet token to verify against, so the
@@ -549,7 +554,15 @@ class Engine extends EventEmitter {
         pendingSellPct: p.pendingSellPct || 100,
         entryLiquidityUsd: p.entryLiquidityUsd ?? null, entryDexId: p.entryDexId || null,
       }));
-    try { this.store.set({ openPositions: live, paperBalance: Number(this.paper.balance) || 0 }); } catch (_) { /* a full disk is not a reason to stop trading */ }
+    try {
+      // Rows belonging to the other desk are carried over untouched: starting in Practice must not delete the record of
+      // a real position it is not managing, and the other way round.
+      const liveMode = this.s.mode === 'live';
+      const held = new Set(mine.map((r) => r.mint));
+      const other = (Array.isArray(this.s.openPositions) ? this.s.openPositions : [])
+        .filter((r) => r && r.mint && !held.has(r.mint) && Boolean(r.paper) === liveMode);
+      this.store.set({ openPositions: [...other, ...mine], paperBalance: Number(this.paper.balance) || 0 });
+    } catch (_) { /* a full disk is not a reason to stop trading */ }
   }
 
   async _restorePositions() {
@@ -558,6 +571,9 @@ class Engine extends EventEmitter {
     let missing = 0;
     for (const rec of saved) {
       if (!rec || !rec.mint || this.positions.has(rec.mint)) continue;
+      // Only the rows this desk owns. A real position restored into the practice desk would be a trade with no wallet
+      // behind it, and a practice row has no token to check against the chain.
+      if (Boolean(rec.paper) === (this.s.mode === 'live')) continue;
       // A practice position has no token in the wallet: it is restored on the record alone, because the alternative is
       // silently closing a trade the user is still watching (and resetting the bankroll under a Profit / Loss figure).
       const held = rec.paper ? null : await this._tokenBalanceRaw(rec.mint).catch(() => null);
@@ -1965,8 +1981,8 @@ class Engine extends EventEmitter {
         .catch((e) => e);
     }
     const px = await pxP;
-    // How long the pool took to answer. The owner's complaint was "the bot sometimes buys too slowly", and the only way
-    // to answer it is with the number: this is the wait that decides whether the entry lands or the price runs away.
+    // How long the pool took to answer. "The bot sometimes buys too slowly" is answerable only with the number, and this
+    // is the wait that decides whether the entry lands or the price runs away.
     const priceMs = Date.now() - now;
     if (px.refuse) {
       this.positions.delete(t.mint);

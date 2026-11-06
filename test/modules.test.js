@@ -477,7 +477,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
     e._marketError(new Error('rate limited'));
     e._marketError(new Error('rate limited'));
     assert.strictEqual(lines.length, 1, 'the first failure is one line, and the rest are swallowed for a minute');
-    assert.match(lines[0], /rate limited/, 'the same sentence the keeper knows');
+    assert.match(lines[0], /rate limited/, 'the same sentence the operator knows');
     assert.match(lines[0], /Every other door keeps working/, 'and it says the desk is still working, not broken');
     e._marketWarnAt = Date.now() - 61000;
     e._marketError(new Error('rate limited'));
@@ -604,7 +604,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
     assert.strictEqual(lines.filter((l) => /holder bar/.test(l)).length, 0, 'one refusal is not an outage');
     await e4._holdersFor(t);
     assert.strictEqual(lines.filter((l) => /holder bar/.test(l)).length, 1, 'three in a row is said once, in words');
-    assert.match(lines.find((l) => /holder bar/.test(l)), /extra entry filters off/, 'with what the keeper can do');
+    assert.match(lines.find((l) => /holder bar/.test(l)), /extra entry filters off/, 'with what the operator can do');
     await e4._holdersFor(t);
     assert.strictEqual(lines.filter((l) => /holder bar/.test(l)).length, 1, 'and not again on the next coin');
     e4.market.holders = async () => ({ holders: 40 });
@@ -700,6 +700,30 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
     await new Promise((r) => setTimeout(r, 60));
     assert.ok(!b.positions.has('PAPERKEEP'), 'a restored practice position is closed by its own target (' + (rp.reason || 'still open at ' + Math.round(rp.mc)) + ')');
     assert.ok(b.paper.balance > balanceBeforeSale, 'and the proceeds land in the restored bankroll');
+
+    // Starting the desk is what brings a saved practice row back - not merely building the engine - and it must not
+    // touch a real position that is also on disk: the practice desk is not the one managing it.
+    {
+      const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-start-'));
+      const st4 = new Store(dir2, 's.json', DEFAULTS);
+      const real = { mint: 'REALROW', symbol: 'REALROW', entryMc: 100, mc: 100, peakMc: 100, solIn: 0.1, feeBuy: 0, openedAt: Date.now(), paper: false };
+      const paper = { mint: 'PAPERROW', symbol: 'PAPERROW', entryMc: 100, mc: 100, peakMc: 100, solIn: 0.1, feeBuy: 0, openedAt: Date.now(), paper: true };
+      st4.set({ mode: 'paper', openPositions: [real, paper], paperBalance: 4.25 });
+      const d = new Engine(wallet, st4);
+      clearInterval(d._bal); clearInterval(d._ui);
+      d.refreshBalance = () => {}; d._log = () => {};
+      d._tokenBalanceRaw = async () => { throw new Error('the practice desk must not ask the chain about anything'); };
+      d._connect = () => {}; d._startMarket = () => {};
+      const r = await d.start({ offline: true });
+      clearInterval(d._loop);
+      assert.ok(r && r.ok, 'the practice desk starts');
+      assert.ok(d.positions.has('PAPERROW'), 'a saved practice position comes back on Start');
+      assert.ok(!d.positions.has('REALROW'), 'and a real position is not restored into the practice desk');
+      assert.ok(Math.abs(d.paper.balance - 4.25) < 1e-9, 'with the saved bankroll: ' + d.paper.balance);
+      const after = st4.get().openPositions;
+      assert.ok(after.some((x) => x.mint === 'REALROW'), 'the real position is still on disk, untouched');
+      assert.ok(after.some((x) => x.mint === 'PAPERROW'), 'and the practice row is still there too');
+    }
 
     // A Reset is a decision about the bankroll, so it has to outlive the window as well: reset, then restart, and the
     // desk opens on 5.000 with an empty practice book - not on the money the reset was meant to clear.

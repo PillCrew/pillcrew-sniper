@@ -314,7 +314,7 @@ app.whenReady().then(() => {
   ipcMain.handle('bot:sell', wrap(async (mint) => engine.sellPosition(mint)));
   ipcMain.handle('bot:sellAll', wrap(async () => engine.sellAll()));
   // Undo a pause now instead of waiting it out. The pause itself is a rule (a cold streak, or a hand on Sell every
-  // coin); the keeper's own decision to go on is not one the app should argue with.
+  // coin); a deliberate decision to go on is not one the app should argue with.
   ipcMain.handle('bot:resume', wrap(async () => engine.resumeEntries()));
   ipcMain.handle('bot:resetPractice', wrap(async () => engine.resetPractice()));
 

@@ -26,13 +26,16 @@ Before this fix: one open practice position and a balance of **5.047** before re
 **5.000** after it, under a Profit / Loss figure that had been restored. Practice positions were deliberately left out of
 the saved book, and the bankroll was rebuilt from the default on every start.
 
-- Practice positions are saved, restored, and still managed by the normal exit rules; the practice bankroll
+- Practice positions are saved, restored on Start, and still managed by the normal exit rules; the practice bankroll
   (`paperBalance`) is written **in the same breath**, so a restored position can never sit above a balance that paid
-  nothing for it.
+  nothing for it. A row that belongs to the other desk is left on disk untouched, so switching between Practice and Real
+  Money cannot delete the record of coins that are still in the wallet.
 - A practice row has no token in the wallet, so the restore path never asks the chain about it — asking is exactly how a
   paper position used to look closed.
-- `test/modules.test.js` proves it across a full rebuild of the engine from the same settings file, and each half of the
-  fix was reverted in turn to confirm the test fails without it.
+- `test/modules.test.js` proves it across a full rebuild of the engine from the same settings file, and each part of the
+  fix was reverted in turn to confirm the test fails without it. Verified end to end on the packaged build: a practice
+  position opened, the app killed, the app started again — the same coin came back on the dashboard with the same
+  balance, still priced and still sold by its own rules.
 
 ### The connection doctor stops crying wolf
 

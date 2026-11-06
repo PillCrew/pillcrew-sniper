@@ -13,7 +13,7 @@ The script opens **the same feed the desk opens**, twice: once against the publi
 never touches a wallet, never signs anything, and prints no key. Matching is done **by transaction signature**, so a
 difference in arrival time needs no clock sync and no trust in anybody's benchmark: the same trade, seen on two doors.
 
-## Measured 2026-11-06, Windows 11, the owner's own endpoints
+## Measured 2026-11-06, Windows 11, the endpoints that were configured at the time
 
 | | Public pool | Private socket (FluxRPC, keyed) |
 | --- | --- | --- |

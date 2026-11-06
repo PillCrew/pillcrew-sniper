@@ -150,10 +150,11 @@ position - and not the day's numbers either.
 
 Practice positions are saved the same way, together with the practice bankroll in `paperBalance`, because a
 practice trade was paid for out of that bankroll: restoring one without the other would show a Profit / Loss
-figure that no balance on the card could explain. A practice row has no token in the wallet, so the restore
-path never asks the chain about it - asking is exactly how a paper position used to be mistaken for a closed
-one. Both `openPositions` and `paperBalance` are the engine's own records on disk; the settings form cannot
-write either.
+figure that no balance on the card could explain. Start restores the rows belonging to the desk that is
+running - a practice position when the app is in Practice Mode, a real one when it is in Real Money - and a
+practice row is restored without asking the chain about a token it never had. Rows belonging to the other desk
+are left on disk untouched, so switching mode cannot delete the record of coins still in the wallet. Both
+`openPositions` and `paperBalance` are the engine's own records on disk; the settings form cannot write either.
 
 ## Failure handling
 
