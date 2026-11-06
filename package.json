@@ -77,10 +77,12 @@
         "deb"
       ],
       "category": "Finance",
-      "maintainer": "PillCrew <hello@pillcrew.fun>"
+      "maintainer": "PillCrew <hello@pillcrew.fun>",
+      "syncDesktopName": true
     }
   },
   "engines": {
     "node": ">=22"
-  }
+  },
+  "desktopName": "pillcrew-sniper.desktop"
 }
