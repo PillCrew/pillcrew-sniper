@@ -25,7 +25,9 @@ body { background: var(--bg); color: var(--txt); font: 14px/1.5 var(--font); ove
     radial-gradient(800px 600px at 100% 100%, rgba(24, 200, 180, .11), transparent 60%),
     linear-gradient(180deg, #050a0a, #040708);
 }
-#bg3d { z-index: 1; pointer-events: none; opacity: .75; }
+/* The pills are decoration. At .75 they read as bright shapes fighting the text they sit behind - measured on a real
+   window at 1024x700, where one covered the dashboard subtitle. Legibility wins; the motion still reads at a third. */
+#bg3d { z-index: 1; pointer-events: none; opacity: .32; }
 .app { position: relative; z-index: 2; display: flex; height: 100vh; }
 
 /* icons */
