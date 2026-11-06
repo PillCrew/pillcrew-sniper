@@ -106,11 +106,19 @@ async function checkRpc(url, { fetchJson, timeout = RPC_TIMEOUT, label = 'node' 
 async function checkAll(settings, opts = {}) {
   const keyInRpc = /[?&](api-key|key|token)=[^&\s]+/.test(String(settings.rpcUrl || ''));
   const socketKeyed = /[?&](api-key|key|token)=/.test(String(settings.rpcWsUrl || ''));
+  // RULE CHANGED 2026-11-06 (1.1.1): a provider's own node IS a socket. With only an RPC URL configured the desk derives
+  // the socket from it (`https://…` → `wss://…`, which Helius serves), so telling the user "no private socket, the feed
+  // will read public nodes" was a false alarm contradicted by the feed itself. The derived address is checked now.
+  const derivedWs = opts.resolvedWs && /^wss?:\/\//.test(opts.resolvedWs)
+    ? opts.resolvedWs
+    : (/^https:\/\//.test(String(settings.rpcUrl || '')) ? String(settings.rpcUrl).replace(/^https:/, 'wss:') : '');
+  const socketUrl = settings.rpcWsUrl ? (opts.resolvedWs || settings.rpcWsUrl) : derivedWs;
+  const socketNote = settings.rpcWsUrl ? '' : ' (derived from your node address)';
   const jobs = [
     checkRpc(settings.rpcUrl, { ...opts, label: 'Main node' }),
     settings.rpcBackupUrl ? checkRpc(settings.rpcBackupUrl, { ...opts, label: 'Backup node' }) : Promise.resolve({ ok: false, label: 'Backup node', ms: 0, url: '', detail: 'Not configured (optional).' }),
-    settings.rpcWsUrl
-      ? checkSocket(opts.resolvedWs || settings.rpcWsUrl, { ...opts, label: 'Your socket', hasKeyInRpc: keyInRpc })
+    socketUrl
+      ? checkSocket(socketUrl, { ...opts, label: 'Your socket' + socketNote, hasKeyInRpc: keyInRpc })
       : Promise.resolve({ ok: false, label: 'Your socket', ms: 0, url: '', detail: 'Not configured - the desk will use public nodes, which are slower.' }),
     settings.geyserUrl
       ? checkSocket(String(settings.geyserUrl).replace(/^https:/, 'wss:').replace(/^http:/, 'ws:'), { ...opts, label: 'Geyser stream', method: 'transactionSubscribe', params: [{ accountInclude: [PUMP_PROGRAM], failed: false, vote: false }, { commitment: 'confirmed' }] })
@@ -119,8 +127,10 @@ async function checkAll(settings, opts = {}) {
   const rows = await Promise.all(jobs);
   const notes = [];
   if (settings.rpcWsUrl && keyInRpc && !socketKeyed) notes.push('Your socket address carries no key while the node address does - the app adds it automatically, and this check used that address.');
-  if (!settings.rpcWsUrl && !settings.geyserUrl) notes.push('No private socket or Geyser endpoint: the feed will read public nodes, which measured nineteen seconds behind on this machine.');
+  if (!socketUrl && !settings.geyserUrl) notes.push('No private socket or Geyser endpoint: the feed will read public nodes, which measured nineteen seconds behind on this machine.');
   if (settings.feedSource === 'geyser' && !settings.geyserUrl) notes.push('The Geyser feed is selected but no endpoint is set, so the desk falls back to the chain feed.');
+  const node = rows.find((r) => r.label === 'Main node');
+  if (node && !node.ok && /429|rate limit/i.test(String(node.detail))) notes.push('Your node is rate limiting the desk (429). Everything keeps working on the public pool, but prices and exits are slower until the limit is lifted: a higher plan, or a second endpoint to spread the calls over.');
   return { rows, notes };
 }
 

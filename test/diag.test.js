@@ -66,12 +66,37 @@ function fake({ onOpenSend, reply, error, closeCode, silent = false }) {
   const bare = await checkAll({ rpcUrl: '', rpcWsUrl: '', geyserUrl: '', rpcBackupUrl: '' }, { fetchJson: okFetch, wsFactory: fake({}) });
   assert.strictEqual(bare.rows.length, 4);
   assert.ok(bare.notes.some((n) => /nineteen seconds behind/.test(n)), 'an unconfigured desk hears the measurement');
+  // RULE ADDED 2026-11-06 (1.1.1): a node address IS a socket. With only rpcUrl set, the derived wss address must be
+  // checked instead of telling the user the feed is on public nodes - a false alarm that contradicted the live feed.
+  const derived = await checkAll(
+    { rpcUrl: 'https://mainnet.helius-rpc.com/?api-key=HEL', rpcWsUrl: '', geyserUrl: '', rpcBackupUrl: '' },
+    { fetchJson: okFetch, wsFactory: fake({}), resolvedWs: 'wss://mainnet.helius-rpc.com/?api-key=HEL' },
+  );
+  const socketRow = derived.rows.find((r) => /^Your socket/.test(r.label));
+  assert.ok(socketRow, 'the derived socket is checked');
+  assert.strictEqual(socketRow.ok, true, 'and it is the one the desk uses: ' + socketRow.detail);
+  assert.ok(/derived from your node address/.test(socketRow.label), 'the label says where it came from');
+  assert.ok(!derived.notes.some((n) => /nineteen seconds behind/.test(n)), 'and no false alarm about public nodes');
+  // Even without the engine's help: the rule lives here too, so the panel cannot disagree with the feed.
+  const alone = await checkAll(
+    { rpcUrl: 'https://mainnet.helius-rpc.com/?api-key=HEL', rpcWsUrl: '', geyserUrl: '', rpcBackupUrl: '' },
+    { fetchJson: okFetch, wsFactory: fake({}) },
+  );
+  assert.strictEqual(alone.rows.find((r) => /^Your socket/.test(r.label)).ok, true, 'the derived socket is checked on its own');
+  assert.ok(!alone.notes.some((n) => /nineteen seconds behind/.test(n)), 'and no false alarm');
+
   const keyed = await checkAll(
     { rpcUrl: 'https://eu.fluxrpc.com?key=ABC', rpcWsUrl: 'wss://ws.eu.fluxrpc.com', geyserUrl: '', rpcBackupUrl: '' },
     { fetchJson: okFetch, wsFactory: fake({}), resolvedWs: 'wss://ws.eu.fluxrpc.com?key=ABC' },
   );
   assert.ok(keyed.notes.some((n) => /adds it automatically/.test(n)), 'and a keyless socket is explained');
   assert.strictEqual(keyed.rows.find((r) => r.label === 'Your socket').ok, true);
+
+  const limited = await checkAll(
+    { rpcUrl: 'https://rpc.example', rpcWsUrl: '', geyserUrl: '', rpcBackupUrl: '' },
+    { fetchJson: async () => ({ status: 429, body: {} }), wsFactory: fake({}) },
+  );
+  assert.ok(limited.notes.some((n) => /rate limiting the desk/.test(n)), 'a throttled node is named as the reason things feel slow');
 
   console.log('Connection doctor tests passed');
   process.exit(0);
