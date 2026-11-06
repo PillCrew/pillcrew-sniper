@@ -270,7 +270,7 @@ app.whenReady().then(() => {
   // and the argument is ignored on purpose.
   ipcMain.handle('diag:check', wrap(async () => {
     const s = store.get();
-    return checkAll(s, { resolvedWs: engine._wsUrl(s.rpcWsUrl) });
+    return checkAll(s, { resolvedWs: engine._wsUrl(s.rpcWsUrl), rpcStatus: engine.rpc.status() });
   }));
   ipcMain.handle('settings:autopilot', wrap(async () => {
     if (engine.running) throw new Error('Stop the bot first, then apply the preset.');

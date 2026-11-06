@@ -98,6 +98,21 @@ function fake({ onOpenSend, reply, error, closeCode, silent = false }) {
   );
   assert.ok(limited.notes.some((n) => /rate limiting the desk/.test(n)), 'a throttled node is named as the reason things feel slow');
 
+  // The live view: a node in a penalty box is named as the reason the desk feels slow, with the node it is using instead.
+  const throttled = await checkAll(
+    { rpcUrl: 'https://EU.Example.com/?key=A', rpcWsUrl: '', geyserUrl: '', rpcBackupUrl: '' },
+    {
+      fetchJson: okFetch, wsFactory: fake({}),
+      rpcStatus: { current: 'https://public.example.com', nodes: [{ url: 'https://EU.Example.com/?key=A', host: 'eu.example.com', coolingDown: true, fails: 3, lastError: '429 Too Many Requests' }] },
+    },
+  );
+  assert.ok(throttled.notes.some((n) => /eu\.example\.com is in a penalty box/.test(n) && /public\.example\.com/.test(n)), 'the penalty box and the stand-in are both named: ' + throttled.notes.join(' | '));
+  const healthy = await checkAll(
+    { rpcUrl: 'https://eu.example.com', rpcWsUrl: '', geyserUrl: '', rpcBackupUrl: '' },
+    { fetchJson: okFetch, wsFactory: fake({}), rpcStatus: { current: 'https://eu.example.com', nodes: [{ url: 'https://eu.example.com', host: 'eu.example.com', coolingDown: false, fails: 2, lastError: 'timeout' }] } },
+  );
+  assert.ok(healthy.notes.some((n) => /refused 2 calls/.test(n)), 'a node that refused calls is reported even when it answers now');
+
   console.log('Connection doctor tests passed');
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

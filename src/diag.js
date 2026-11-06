@@ -131,6 +131,19 @@ async function checkAll(settings, opts = {}) {
   if (settings.feedSource === 'geyser' && !settings.geyserUrl) notes.push('The Geyser feed is selected but no endpoint is set, so the desk falls back to the chain feed.');
   const node = rows.find((r) => r.label === 'Main node');
   if (node && !node.ok && /429|rate limit/i.test(String(node.detail))) notes.push('Your node is rate limiting the desk (429). Everything keeps working on the public pool, but prices and exits are slower until the limit is lifted: a higher plan, or a second endpoint to spread the calls over.');
+  // RULE ADDED 2026-11-06 (1.1.1): the live view from the desk itself. A node can look healthy in a single call and still be
+  // in a penalty box from the traffic of the last minute, and that is the difference between "the bot is slow" and "the plan
+  // is too small for the request rate" - the one thing a reader can act on.
+  const live = opts.rpcStatus;
+  if (live && Array.isArray(live.nodes)) {
+    const main = live.nodes.find((n) => n.url === settings.rpcUrl) || live.nodes[0];
+    const cooling = live.nodes.find((n) => n.coolingDown);
+    if (cooling) {
+      notes.push(`${cooling.host} is in a penalty box right now (${cooling.lastError || 'HTTP 429 or a timeout'}), so the desk is calling ${(() => { try { return new URL(live.current).hostname; } catch (_) { return 'another node'; } })()} instead. Prices and exits are slower until it recovers - that is the plan limit, not the bot.`);
+    } else if (main && main.fails > 0) {
+      notes.push(`${main.host} has refused ${main.fails} call${main.fails === 1 ? '' : 's'} in this session (last: ${main.lastError || 'unknown'}). The desk keeps working on the other nodes.`);
+    }
+  }
   return { rows, notes };
 }
 
