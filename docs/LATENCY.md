@@ -63,6 +63,8 @@ a public node while a private one is configured, the Activity log says so once a
 
 1. Settings → **WebSocket URL**: your provider's socket (a private node's socket, or a Geyser-class endpoint which the
    desk prefers automatically).
-2. `node scripts/latency.js 120` from the repository.
-3. Compare the two rows. If your socket is not the faster one by a clear margin, the problem is the socket or the
+2. Settings → **Test my connection** first: it opens each address once and says what it answered. A ✕ there is the
+   problem, not the bot.
+3. `node scripts/latency.js 120` from the repository.
+4. Compare the two rows. If your socket is not the faster one by a clear margin, the problem is the socket or the
    provider — not the bot.

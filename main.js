@@ -6,6 +6,7 @@ const { WalletManager } = require('./src/wallet');
 const { Engine, DEFAULTS, PROFILES, AUTOPILOT } = require('./src/engine');
 const Share = require('./src/share');
 const { trustedSender } = require('./src/ipcguard');
+const { checkAll } = require('./src/diag');
 
 const ALLOWED_HOSTS = new Set(['pump.fun', 'solscan.io', 'pumpportal.fun', 'pumpdev.io', 'www.pumpdev.io', 'www.helius.dev', 'helius.dev', 'phantom.app', 'solflare.com', 'pillcrew.fun', 'www.pillcrew.fun', 'developers.jup.ag', 'portal.jup.ag', 'twitter.com', 'x.com', 'api.dashboard.sol-incinerator.com', 'sol-incinerator.com']);
 
@@ -267,6 +268,10 @@ app.whenReady().then(() => {
   // this handler wrote the preset and then pressed Start itself, so one press in Practice mode began trading. A settings
   // button that starts a bot is a trap - the same press in Real Money would have moved real money - so the start is gone
   // and the argument is ignored on purpose.
+  ipcMain.handle('diag:check', wrap(async () => {
+    const s = store.get();
+    return checkAll(s, { resolvedWs: engine._wsUrl(s.rpcWsUrl) });
+  }));
   ipcMain.handle('settings:autopilot', wrap(async () => {
     if (engine.running) throw new Error('Stop the bot first, then apply the preset.');
     const cap = Math.min(store.get().sessionLossLimitSol, AUTOPILOT.sessionLossLimitSol);

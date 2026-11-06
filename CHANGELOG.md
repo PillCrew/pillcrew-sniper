@@ -3,6 +3,26 @@
 All notable changes to this project are recorded here. The format follows Keep a Changelog and the
 project uses semantic versioning.
 
+## [1.1.0] - 2026-11-06
+
+### "Test my connection": the check that should have existed before the bug
+
+The 401 socket and the capped PumpDev stream in 1.0.9 were both invisible from the app until the diary mentioned them.
+Settings now has one button that opens **every** configured address once — main node, backup node, your socket, the
+Geyser stream — and answers in words, in about five seconds, without starting the bot or touching a wallet:
+
+- a node: `✓ Main node · 118 ms · Answered in 118 ms (solana-core 2.1.0)`
+- a socket: `✓ Your socket · 104 ms · Subscribed to the Pump.fun program logs`
+- the failure that started this: `✕ Your socket · Refused without a key. Your RPC URL carries one, so the socket needs
+  it too …`
+- and the honest note when nothing private is configured: *the feed will read public nodes, which measured nineteen
+  seconds behind on this machine.*
+
+`src/diag.js` turns a status into a sentence — 401/403, 404, refused connection, unknown host, timeout, "that is an HTTP
+address, not a socket", 429, a dropped connection — and each sentence says what to change. `test/diag.test.js` holds
+every one of those cases with injected fakes (no network), and the Electron UI test presses the button and checks that
+the answer reaches the screen.
+
 ## [1.0.9] - 2026-11-06
 
 ### The feed was slow because the socket was refused, and nobody was told

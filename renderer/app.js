@@ -888,6 +888,33 @@
       renderSettings();
     } catch (e) { toast(e.message, true); }
   });
+  // ── the connection doctor ──
+  // RULE ADDED 2026-11-06 (1.0.9): a socket that answers 401 without its key used to fall back to public nodes in
+  // silence, and the feed was nineteen seconds behind. One press now opens every configured address and says what it
+  // answered, so a dead endpoint is found on the settings screen instead of a week of trades later.
+  $('#diagBtn').addEventListener('click', async () => {
+    const out = $('#diagOut');
+    const btn = $('#diagBtn');
+    btn.disabled = true;
+    out.hidden = false;
+    out.textContent = 'Checking…';
+    try {
+      const r = await call(api.diagCheck());
+      const rows = (r && r.rows) || [];
+      const notes = (r && r.notes) || [];
+      clear(out);
+      for (const row of rows) {
+        out.append(h('div', { class: 'diag-row ' + (row.ok ? 'ok' : 'bad') },
+          h('b', {}, (row.ok ? '✓ ' : '✕ ') + row.label),
+          h('span', {}, row.ok ? `${row.ms} ms · ${row.detail}` : row.detail)));
+      }
+      for (const note of notes) out.append(h('div', { class: 'diag-note' }, note));
+    } catch (e) {
+      out.textContent = 'The check could not run: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
   // ───────── share a settings code ─────────
   async function fillShareCode() {
     try {

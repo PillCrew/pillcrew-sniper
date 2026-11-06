@@ -166,6 +166,16 @@ input[type=checkbox] { accent-color: var(--acc); width: 16px; height: 16px; }
 .profile.active { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc), 0 10px 40px rgba(53, 240, 140, .14); }
 .rpc-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .rpc-list span { display: flex; align-items: center; gap: 7px; padding: 5px 11px; border-radius: 20px; background: var(--panel-2); border: 1px solid var(--line); font-size: 12px; }
+/* The connection doctor's answer: a row per door, green or red, in words. */
+.diag-out { margin-top: 14px; display: grid; gap: 8px; }
+.diag-row { display: grid; gap: 2px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); font-size: 13px; }
+.diag-row b { font-weight: 600; }
+.diag-row span { color: var(--mute); }
+.diag-row.ok { border-color: rgba(56, 214, 138, .45); }
+.diag-row.ok b { color: var(--acc); }
+.diag-row.bad { border-color: rgba(255, 92, 122, .45); }
+.diag-row.bad b { color: #ff5c7a; }
+.diag-note { padding: 8px 12px; border-radius: 10px; border: 1px dashed var(--line); color: var(--mute); font-size: 12.5px; }
 .rpc-list span.active { border-color: rgba(53, 240, 140, .45); }
 
 /* wallet */

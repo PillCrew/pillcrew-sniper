@@ -1,7 +1,7 @@
 {
   "name": "pillcrew-sniper",
   "productName": "PillCrew Sniper",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "description": "PillCrew Sniper - beginner-friendly Pump.fun trading bot with a built-in wallet",
   "homepage": "https://pillcrew.fun",
   "repository": {
@@ -21,7 +21,7 @@
     "start": "electron .",
     "backtest": "node scripts/backtest.js",
     "test:ui": "electron test/ui.test.js",
-    "test": "node test/rpc.test.js && node test/chain.test.js && node test/smoke.js && node test/modules.test.js && node test/market.test.js && node test/exits.test.js && node test/guards.test.js && node test/wallet.test.js && node test/share.test.js && node test/jito.test.js && node test/curve.test.js && node test/geyser.test.js && node test/copy.test.js && node test/audit.test.js",
+    "test": "node test/rpc.test.js && node test/chain.test.js && node test/smoke.js && node test/modules.test.js && node test/market.test.js && node test/exits.test.js && node test/guards.test.js && node test/wallet.test.js && node test/share.test.js && node test/jito.test.js && node test/curve.test.js && node test/geyser.test.js && node test/diag.test.js && node test/copy.test.js && node test/audit.test.js",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win --publish never",
     "dist:mac": "electron-builder --mac --publish never",

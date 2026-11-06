@@ -26,6 +26,14 @@ app.whenReady().then(async () => {
     // The button must write settings and nothing else, so both channels are recorded and checked below.
     'settings:autopilot': (...args) => { calls.autopilotArgs = args; return settings; },
     'bot:start': () => { calls.botStart += 1; return { ok: true }; },
+    // The connection doctor, answered from a fixture so the UI test never dials anything.
+    'diag:check': () => ({
+      rows: [
+        { ok: true, label: 'Main node', ms: 120, detail: 'Answered in 120 ms (solana-core 2.1.0).' },
+        { ok: false, label: 'Your socket', ms: 90, detail: 'Refused without a key. Copy the socket URL together with the key your provider gives for it.' },
+      ],
+      notes: ['No private socket or Geyser endpoint: the feed will read public nodes.'],
+    }),
   })) {
     ipcMain.handle(name, (event, ...args) => {
       assert.ok(trustedSender(event, win, entry), 'real preload IPC passes the main-frame check');
@@ -57,6 +65,14 @@ app.whenReady().then(async () => {
   assert.equal(calls.botStart, 0, 'pressing Best Profit never starts the bot');
   assert.ok(await win.webContents.executeJavaScript('(document.querySelector("#autopilotMsg").textContent || "").includes("Press Start")'),
     'and the message says the run has to be started by hand');
+  // RULE ADDED 2026-11-06 (1.0.9): the "Test my connection" button must reach the doctor and draw its answer, and it
+  // must show the failing door in words rather than a silent blank.
+  assert.ok(await win.webContents.executeJavaScript('Boolean(document.querySelector("#diagBtn"))'), 'the doctor has a button');
+  await win.webContents.executeJavaScript('document.querySelector("#diagBtn").click()');
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  const diagText = await win.webContents.executeJavaScript('document.querySelector("#diagOut").textContent');
+  assert.ok(/Main node/.test(diagText), 'the answer names each door: ' + diagText);
+  assert.ok(/✕/.test(diagText), 'and a refused door is marked');
   assert.deepEqual(errors, []);
   clearTimeout(timer);
   console.log('Electron UI smoke test passed (hidden window, isolated mock wallet, trading stopped)');

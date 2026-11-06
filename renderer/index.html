@@ -224,6 +224,11 @@
             <label class="field wide"><span>Geyser token (optional)</span><input id="geyserToken" type="password" placeholder="appended to the endpoint as ?api-key=… when the URL has none" autocomplete="off" spellcheck="false"></label>
           </div>
           <p class="hint">A Geyser-class stream delivers each transaction with its logs, which is the same program data this app decodes — only closer to the validator, so a launch is seen sooner. Leave it empty and the desk uses the public program-log feed exactly as before; if the endpoint stops answering, the desk falls back on its own.</p>
+    <div class="card-foot" style="align-items:center;gap:12px">
+      <button class="btn ghost" id="diagBtn" type="button">Test my connection</button>
+      <span class="hint" style="margin:0">Opens every address above once and says, in words, what each one answered. Five seconds, no trading.</span>
+    </div>
+    <div id="diagOut" class="diag-out" hidden></div>
           <div id="rpcList" class="rpc-list"></div>
         </details>
 

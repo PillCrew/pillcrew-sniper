@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('api', {
   incineratorCloseAll: call('inc:closeAll'),
   incineratorBurn: call('inc:burn'),
   openExternal: call('open:external'),
+  diagCheck: call('diag:check'),
   onState: (cb) => ipcRenderer.on('state', (_e, s) => cb(s)),
   onPositions: (cb) => ipcRenderer.on('positions', (_e, list) => cb(list)),
   onLog: (cb) => ipcRenderer.on('log', (_e, l) => cb(l)),

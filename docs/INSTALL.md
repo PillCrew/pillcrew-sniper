@@ -213,6 +213,7 @@ needs a wallet password; it is never part of the suite.
 | *"dlopen(): error loading libfuse.so.2"* | AppImage without FUSE 2 | Install `libfuse2`/`libfuse2t64`, or use `--appimage-extract-and-run` |
 | *"SUID sandbox helper binary"* on Linux | Source checkout, sandbox helper not set up | See the `chrome-sandbox` commands above |
 | Window is blank / does not open | A renderer failure, logged to disk | Read `logs/pillcrew-YYYY-MM-DD.log` in your data folder |
+| Everything works but the desk feels slow, or misses moves | The feed may be on public nodes — a provider socket without its key answers 401 and gets skipped | Settings → **Test my connection**: it opens each address once and says what it answered, then fix what is marked ✕ |
 | The bot buys nothing | The entry bar is doing its job — free slots are not a bug | The Activity log counts the reasons once a minute (`needs N buyers`, `market cap out of range`) |
 | *"Live entries are blocked: the on-chain mint check cannot be answered"* | The node cannot answer the safety check | Try another RPC in Settings; nothing is bought with real money until it answers |
 
