@@ -58,7 +58,7 @@ there is no recovery without it.
 
 ### A · Installer
 
-1. Download `PillCrew-Sniper-<version>-mac-<arch>.dmg` (`arm64` for Apple silicon, `x64` for Intel).
+1. Download `PillCrew-Sniper-<version>-mac-universal.dmg` — one file that runs on Apple silicon and on Intel Macs.
 2. Open the `.dmg` and drag **PillCrew Sniper** into **Applications**.
 3. The build is not notarized, so Gatekeeper blocks the first launch. Either **right-click the app → Open → Open**, or
    clear the quarantine flag once:

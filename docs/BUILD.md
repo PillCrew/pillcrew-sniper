@@ -59,11 +59,12 @@ Smoke-test a packaged build without touching your own profile:
 ### macOS
 
 ```sh
-npm run dist:mac
+npm run dist:mac -- --universal
 ```
 
-Produces `dist/PillCrew-Sniper-<version>-mac-<arch>.dmg` (`arm64` on Apple silicon, `x64` on Intel). A Mac bundle
-cannot be produced or signed from Windows or Linux — that is an Apple requirement, not an electron-builder one.
+Produces `dist/PillCrew-Sniper-<version>-mac-universal.dmg`: Intel and Apple silicon in one bundle (`--arm64` or `--x64`
+alone makes a single-architecture build). A Mac bundle cannot be produced or signed from Windows or Linux — that is an
+Apple requirement, not an electron-builder one. The CI builds this on a macOS runner for every version tag.
 
 An unsigned `.dmg` triggers Gatekeeper on first launch; that is expected for a build without a Developer ID. Users
 clear it with a right-click → Open, or:
@@ -101,7 +102,10 @@ with `CSC_IDENTITY_AUTO_DISCOVERY: false` and uploads them as artifacts — it i
 2. Version bumped in `package.json` **and** `package-lock.json` (both places), with a `CHANGELOG.md` section written.
 3. The app starts, wallet flows work, Practice Mode runs for a few minutes with no console errors.
 4. `npm run dist:<os>` on each system; smoke-test the packaged binary with a throwaway `--user-data-dir`.
-5. Tag `v<version>`, upload the installers, paste the changelog section into the release notes.
+5. Tag `v<version>` and push it. The CI builds Windows, Linux and a universal macOS installer on real runners and puts
+   all four files on a **draft** release with generated notes — nothing reaches a user until you read that draft and
+   press **Publish**. Paste the changelog section into the notes before publishing; the generated notes list commits,
+   not consequences.
 6. Say what changed in plain words — including anything that got slower, louder, or was not fixed.
 
 ## Notes that save an afternoon

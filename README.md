@@ -22,14 +22,13 @@ no account, no server, no subscription, and your wallet key never leaves the mac
 | Platform | Command / file |
 | --- | --- |
 | **Windows 10/11** | `PillCrew-Sniper-<version>-win-x64.exe` — installs for your user, no admin rights |
-| **macOS 12+** | `PillCrew-Sniper-<version>-mac-arm64.dmg` (Apple silicon) or `…-mac-x64.dmg` (Intel) |
+| **macOS 12+** | `PillCrew-Sniper-<version>-mac-universal.dmg` — one file for Intel and Apple silicon |
 | **Linux x64** | `PillCrew-Sniper-<version>-linux-x86_64.AppImage` or `…-linux-amd64.deb` |
 
-Prebuilt installers are published on the
-[releases page](https://github.com/PillCrew/pillcrew-sniper/releases). The first public release goes out after the
-testing rounds, so if that page is still empty, use the source route below — or build the package yourself in one
-command ([docs/BUILD.md](docs/BUILD.md)). Unsigned builds need one click through SmartScreen on Windows, or one
-right-click → Open on macOS.
+Prebuilt installers are on the [releases page](https://github.com/PillCrew/pillcrew-sniper/releases); the source route
+below stays for anyone who prefers to run from a checkout, or to build the package in one command
+([docs/BUILD.md](docs/BUILD.md)). Unsigned builds need one click through SmartScreen on Windows, or one right-click →
+Open on macOS.
 
 ### Run from source (all three systems)
 
