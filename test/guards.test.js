@@ -183,7 +183,7 @@ const tokenOp = (tag) => new TransactionInstruction({
   assert.strictEqual(store.get().openPositions.length, 1, 'the file matches the book after the restore');
 
   fs.rmSync(dir, { recursive: true, force: true });
-  // RULE ADDED 2026-11-05: Profit / Loss must not invent money. Two ways it did, both measured on the owner's wallet:
+  // RULE ADDED 2026-11-05: Profit / Loss must not invent money. Two ways it did, both measured on the wallet:
   // coins already held at Start were added to the equity but not to the baseline (three restored tickets plus their
   // rent read as +0.035 SOL of profit the second the bot started), and a deposit read as profit because the wallet is
   // one of the two numbers in the subtraction.

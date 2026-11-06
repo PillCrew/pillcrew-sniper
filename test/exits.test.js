@@ -496,7 +496,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     assert.ok(e.positions.has('NOFEE'), 'the position stays in the book, so it closes by itself after a deposit');
     assert.ok(p.nextTry > Date.now(), 'and it is tried again, not abandoned');
     const line = said.find((l) => /0\.00089/.test(l.msg));
-    assert.ok(line, 'the owner is told the rent floor, in plain words');
+    assert.ok(line, 'the trader is told the rent floor, in plain words');
     assert.strictEqual(line.level, 'error');
     assert.match(line.msg, /65|W/, 'with the address to send to');
     assert.ok(!said.some((l) => /has not sold yet/.test(l.msg)), 'and not with the misleading not-confirmed sentence');
@@ -519,7 +519,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     assert.ok(said.some((l) => /keep the exit fees aside/.test(l.msg)), 'and it says so');
   }
 
-  // A take profit that has slipped back to break-even before the order went out is not sold: the owner's rule is that
+  // A take profit that has slipped back to break-even before the order went out is not sold: the rule is that
   // a winner is never closed at a loss, and the stop or the trail decides afterwards.
   {
     const e = engine({ takeProfitPct: 40, maxHoldSec: 600, trailArmPct: 0, breakEvenPct: 0 });
@@ -538,7 +538,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(p.closing, false, 'the position stays open, not stuck');
   }
 
-  // The safeguard the owner asked for: a level has to HOLD before the bot sells. One tick that touches +60% and is
+  // The safeguard: a level has to HOLD before the bot sells. One tick that touches +60% and is
   // gone again must not close anything, and the same level held for the window must.
   {
     const e = engine({ takeProfitPct: 40, triggerHoldMs: 300 });
@@ -685,7 +685,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
   }
 
   // A price that is not arriving any more must not look like a price. Measured live on 2026-11-05: a coin went from a
-  // 50k market cap to nothing while the position card kept printing +71%, and the owner sold it by hand because the
+  // 50k market cap to nothing while the position card kept printing +71%, and a trader sold it by hand because the
   // bot never did. Two separate faults made that possible, and both are held here.
   {
     // 1) A FALL is the market and is taken on the first reading, whatever its size. Only a jump UP needs a second
@@ -748,7 +748,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
 
   // A sale that did not come from a trigger still has to say what the coin was doing at that moment. A missing
   // `firedAt` compares as zero in JavaScript, so every manual sale printed "(Manual sell at +0.0%)" - a lie on the
-  // one line the owner reads after pressing the button himself.
+  // one line the trader reads after pressing the button.
   {
     const logs = [];
     const e = engine();
@@ -975,7 +975,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     e._pricePosition(q, Date.now());
     assert.ok(Math.abs(q.mc - 92) < 0.01, 'an ordinary move is taken on the first reading');
 
-    // RULE CHANGED 2026-11-05 (1.0.2, measured on the owner's own trade: `$NIGGER · Peak give-back (peaked at +30.7%) ·
+    // RULE CHANGED 2026-11-05 (1.0.2, measured on a live trade: a position that peaked at +30.7% was booked 28 points under its level and lost 13.1%,
     // -13.1%`): a FALL is the market and is taken on the FIRST reading when the position opened on the pool's own price.
     // Holding it back until two prints happened to agree within 10% is what let a dying coin keep a stale number and
     // then book the first tidy print 28 points under the level that fired.
@@ -1004,7 +1004,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     e._pricePosition(spike, Date.now());
     assert.strictEqual(spike.mc, 100, 'a four-fold print is not a market until it prints twice');
 
-    // RULE ADDED 2026-11-05 (1.0.2): a PROFIT rule may not act on a number nobody refreshed. Measured on the owner's own
+    // RULE ADDED 2026-11-05 (1.0.2): a PROFIT rule may not act on a number nobody refreshed. Measured on a live
     // trade, a give-back fired 28 points under its own level because the position had been sitting on a stale price.
     // A stop still fires - it protects money - but a target or a give-back asks for a fresh reading first.
     const stale = engine({ simpleMode: true, takeProfitPct: 20, triggerHoldMs: 0 });
@@ -1035,7 +1035,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(sold, 1, 'a stop fires on whatever reading it has');
 
     // The entry read is shorter when the coin's own tape is fresh: the pool's number is only confirmation then.
-    // RULE CHANGED 2026-11-05 (1.0.4, the owner: "bot powinien zapierdalać x10 szybciej ze wszystkim"): the budgets came down
+    // RULE CHANGED 2026-11-05 (1.0.4: the scan and the tick were too slow for a sniper): the budgets came down
     // from 450/700 ms to 300/500 ms, and a coin with a fresh tape no longer reaches this read at all (`_entryPrice` prices it
     // from the trade it just printed). The rule itself is unchanged: a fresh tape gets the short wait, a quiet coin the long one.
     assert.strictEqual(stale._entryBudget({ lastStreamAt: Date.now() }), 300, 'a fresh stream means a 300 ms read');

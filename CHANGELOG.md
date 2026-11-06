@@ -121,8 +121,8 @@ book slowly.
 
 ### Winners stop being given back on a stale price
 
-Measured on the owner's own trades, twice in one evening: `$NIGGER · Peak give-back (peaked at +30.7%) · -13.1%` and
-`$VC · Take profit · peaked +3102.1%` while the take profit booked +77.6%. Two separate faults, both about which number
+Measured on live trades, twice in one evening: two positions that peaked above +30% were given back to a loss, and one
+showed a peak of **+3102%** while the take profit booked +77.6%. Two separate faults, both about which number
 the rule is allowed to believe:
 
 - **a profit rule may not act on a price nobody refreshed.** A position that has not been priced for more than
@@ -136,7 +136,7 @@ the rule is allowed to believe:
   figure; a row from it may no longer set the market cap (that is where a thirty-one-fold "peak" came from), and it may
   no longer un-graduate a coin that has traded on PumpSwap.
 
-### The shipped plan is the owner's own settings code, third revision
+### The shipped plan is the shipped settings code, third revision
 
 `minBuyers` 50, band **60-15000 SOL**, 10 slots, 30 buys a minute, target 80 / stop 45 / hold 500 s, pause after 10
 losses for 5 minutes, `maxRoundTripPct` 8. The full desk is on (`simpleMode: false`), so the score gate at 50 and the
@@ -160,7 +160,7 @@ coin for four minutes instead of two, so the map churns less in the first place.
 
 ### A fall is the market, and is never held back
 
-Measured on the owner's own trade: `$NIGGER · Peak give-back (peaked at +30.7%) · -13.1%`. The rule fired 28 points under
+Measured on a live trade: a position that peaked at +30.7% was booked at -13.1%. The rule fired 28 points under
 its own level, and the reason was the price guard, not the exit: consecutive prints of a dying coin were 25% and 30%
 apart, the guard demanded two within 10%, so the position sat on a stale price while the coin collapsed and then booked
 the first print that happened to look tidy.
@@ -172,9 +172,9 @@ the first print that happened to look tidy.
 - the entry's provenance (`pxEntry`) is kept with the position and on disk, so a restart does not change which rule
   protects it.
 
-### The shipped plan is the owner's own settings code
+### The shipped plan is the settings code
 
-`PCS1~eyJ2IjoxLCJwIjoiYmFsYW5jZWQi…` is now what a fresh install runs, and what the **Balanced** card applies:
+`PCS1~…` is now what a fresh install runs, and what the **Balanced** card applies:
 
 | Setting | Value | |
 | --- | --- | --- |
@@ -222,7 +222,7 @@ The first public release.
 ### A second private node, and a socket the operator can name
 
 - **`rpcBackupUrl`** - a second private node, tried right after the first and still ahead of the public pool. Measured
-  with the owner's own keys in one session: FluxRPC took a timeout and the desk switched to Helius inside the same
+  with two private nodes in one session: FluxRPC took a timeout and the desk switched to Helius inside the same
   trade, with `RPC switched (timeout)` in the diary and nothing lost.
 - **`rpcWsUrl`** - the trade stream's socket, used verbatim. A provider's WebSocket is often on a **different host**
   than its HTTP endpoint (FluxRPC: `wss://ws.eu.fluxrpc.com` against `https://eu.fluxrpc.com`); a URL guessed by
@@ -367,7 +367,7 @@ fill at**.
 
 ### An entry price the wallet never paid, and the phantom peak it produced
 
-Measured on the owner's own **$sol** trade: bought 0.005 SOL at 17:03:55, sold five seconds later and booked
+Measured on a live **$sol** trade: bought 0.005 SOL at 17:03:55, sold five seconds later and booked
 **`Take profit · peaked +301.4% · -15.0%`**. Two faults, both in the same five seconds:
 
 - **The entry was a board row while the order filled somewhere else.** The log itself says `sol filled on the
@@ -461,7 +461,7 @@ lines** and not one of them named the cause, because the door's own sentence was
 
 - **A coin already held at Start is part of what the wallet was worth at Start.** Its value and its rent were added to
   the equity on every push but never to the baseline, so a restart with three restored positions opened the session at
-  a fake **+0.035 SOL** profit (three tickets plus their rent, to the lamport) - measured on the owner's own wallet.
+  a fake **+0.035 SOL** profit (three tickets plus their rent, to the lamport) - measured on a live wallet.
   The baseline is now the wallet **plus** what the book was already worth (`_holdingsSol`), and the card says
   **"since Start"** so the number can be read without guessing.
 - **An unpriced coin is marked at what was paid for it**, never at zero: a buy whose first reading has not arrived yet
@@ -475,7 +475,7 @@ lines** and not one of them named the cause, because the door's own sentence was
 
 ### The desk stops going blind: a full map makes room for a launch
 
-- **A newcomer is now tracked even when four hundred coins are already on the list.** This is the freeze the owner
+- **A newcomer is now tracked even when four hundred coins are already on the list.** This is the freeze a trader
   watched: the tracked set sat at **400**, and every launch after that was silently refused - the log stopped saying
   "new coins" and only the next line was ever printed again. The map now evicts the oldest, lowest-scoring coin that
   nobody holds; a launch five seconds old is worth more than a dead coin from ten minutes ago. A coin that is held is

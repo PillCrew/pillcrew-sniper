@@ -74,7 +74,7 @@ const pair = (m, extra = {}) => ({
   try {
     const market = new Market();
     const count = (rows, src) => rows.filter((r) => r.source === src).length;
-    // RULE ADDED 2026-11-05: the Jupiter budget is ONE call a second (measured on the owner's own key: twenty quick
+    // RULE ADDED 2026-11-05: the Jupiter budget is ONE call a second (measured on a live key: twenty quick
     // calls answered five and refused fifteen, one every 700 ms broke on the fourth). Successive discovery rounds in
     // this test therefore wait for the allowance instead of pretending five calls fit in a second.
     const settle = () => new Promise((r) => setTimeout(r, 1100));
@@ -87,7 +87,7 @@ const pair = (m, extra = {}) => ({
 
     await settle();
     // RULE ADDED 2026-11-05: the Jupiter budget is its own bucket - two calls in a second, then one a second - kept
-    // apart from DexScreener's four. Measured on the owner's own key: twenty quick calls answered five and refused
+    // apart from DexScreener's four. Measured on a live key: twenty quick calls answered five and refused
     // fifteen, one every 700 ms broke on the fourth, one every 1.1 s did not.
     assert.strictEqual(market._slot('jupiter', 2), true, 'the first Jupiter call in a second is allowed');
     assert.strictEqual(market._slot('jupiter', 2), true, 'so is the second, a cycle asks the index and a door');

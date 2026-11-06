@@ -26,7 +26,7 @@ const HOT_EVERY_MS = 1000;
 const POS_EVERY_MS = 150;
 const POS_BOARD_EVERY_MS = 500;
 const HOT_BATCH = 30;
-// RULE CHANGED 2026-11-05 (1.0.4, the owner: "bot powinien zapierdalać x10 szybciej ze wszystkim"): 50 ms down to 25. The
+// RULE CHANGED 2026-11-05 (1.0.4: the scan and the tick were too slow for a sniper): 50 ms down to 25. The
 // tick is where a position is measured against its exit ladder AND where the scan runs, so halving it halves how long a
 // stop or a take profit can sit unseen, and doubles how often a qualifying coin is looked at. Measured cost of one
 // judgement: ~4 us (`_bench-eval3.js`), so the extra ticks are noise next to the RPC calls the desk already makes.
@@ -72,8 +72,8 @@ const TRAIL_GIVE_FRAC = 0.45;
 // The rules that are watching money leave rather than waiting for a move to prove itself. Their hold is
 // `STOP_HOLD_MS` at most (see `_riskHoldMs`), never the profit rule's `triggerHoldMs`.
 const RISK_RULES = new Set(['Stop loss', 'Trailing stop', 'Break even', 'Peak give-back']);
-// RULE ADDED 2026-11-05 (1.0.2): a PROFIT rule may not act on a price nobody has refreshed. Measured on the owner's own
-// trade (`$NIGGER · Peak give-back (peaked at +30.7%) · -13.1%`): the position sat on a stale number while the coin
+// RULE ADDED 2026-11-05 (1.0.2): a PROFIT rule may not act on a price nobody has refreshed. Measured on a live
+// trade (a position that peaked at +30.7% and was booked at -13.1%): it sat on a stale number while the coin
 // fell, and the rule then booked the first reading that arrived, 28 points under its own level. A stop, the creator
 // selling and the time limit still act on whatever they have - they protect money. A target protects a gain, and a
 // gain measured on a stale price is not a measurement.
@@ -86,7 +86,7 @@ const PUMP_SUPPLY = 1e9;
 const ENTRY_FILL_MAX_RATIO = 1000;
 const ENRICH_PER_CYCLE = 90;
 const SCAN_PER_TICK = 60;
-// RULE CHANGED 2026-11-05 (1.0.4, the owner: "bot powinien zapierdalać x10 szybciej ze wszystkim"): a coin was re-judged
+// RULE CHANGED 2026-11-05 (1.0.4: the scan and the tick were too slow for a sniper): a coin was re-judged
 // once every 700 ms; the gate is now 400 ms, so a coin that crosses its bar waits half as long for the desk to look at it
 // again. Measured, not guessed (`_bench-eval.js`): one judgement costs ~0.43 ms of CPU, so a 250 ms gate would have cost a
 // whole core with 600 coins on the list. The big win is not here - it is in `_entryPrice`, which no longer waits 450-700 ms
@@ -121,8 +121,8 @@ const PROFILES = {
     takeProfitPct: 60, stopLossPct: 6, maxHoldSec: 150, slippagePct: 8, priorityFeeSol: 0.0002,
     tp1Pct: 18, tp1SellPct: 50, trailArmPct: 14, trailGivePct: 8, breakEvenPct: 0,
   },
-  // RULE CHANGED 2026-11-05 (1.0.2, the owner's own settings code `PCS1~eyJ2IjoxLCJwIjoiYmFsYW5jZWQi...`): `balanced`
-  // IS the shipped plan now - the numbers below are the ones the owner trades and asked to ship as the default.
+  // RULE CHANGED 2026-11-05 (1.0.2, the shipped settings code `PCS1~…`): `balanced`
+  // IS the shipped plan now - the numbers below are the default a fresh install runs.
   //
   // Read it as one plan, because that is what it is:
   //  - the ENTRY waits for a crowd: seventy distinct wallets in the window, a net 2 SOL of buying, a market cap between
@@ -141,7 +141,7 @@ const PROFILES = {
     // The ticket is NOT part of a style: a press of a card must never raise the money at risk (see `settings:profile`).
     buyAmountSol: undefined,
     // The FULL desk, not the simple one: the trail (14/8) is live, the score gate is live at 50, and the five minute
-    // band is off. Ten slots and thirty buys a minute are the owner's own numbers, and the session cap is one SOL.
+    // band is off. Ten slots and thirty buys a minute are the shipped numbers, and the session cap is one SOL.
     simpleMode: false, maxPositions: 10, maxBuysPerMin: 30,
     watchSec: 3, entryWindowSec: 45, minLiqUsd: 4000, triggerHoldMs: 400,
     sessionLossLimitSol: 1, maxLossStreak: 10, pauseMinutes: 5,
@@ -270,7 +270,7 @@ class Engine extends EventEmitter {
     // real win rate, and each book can be reset on its own.
     this.books = { paper: emptyBook(), live: emptyBook() };
     // The record of what was booked survives a restart, because a panel that forgets the day's profit and loss makes
-    // the operator trade blind - and every restart used to do exactly that.
+    // an operator trade blind - and every restart used to do exactly that.
     this._loadBook();
     this.stats = { seen: 0, lastLatencyMs: null, lastSellMs: null, reclaimedSol: 0, launches: 0, feeSpentSol: 0, orderFails: 0, entryPx: { curve: 0, board: 0, refused: 0 } };
     // Said in the log panel, once, when the settings file was damaged or unreadable: the app is then running on
@@ -1215,13 +1215,13 @@ class Engine extends EventEmitter {
       const next = t.mc;
       const seeded = p.pxSeed && p.pxSource === 'curve';
       const bar = seeded ? 0.2 : WILD_MOVE_FRAC;
-      // RULE ADDED 2026-11-05 (1.0.2, measured on the owner's own trade: `$NIGGER · Peak give-back (peaked at +30.7%) ·
+      // RULE ADDED 2026-11-05 (1.0.2, measured on a live trade: a position that peaked at +30.7% was booked 28 points under its level and lost 13.1%,
       // -13.1%`): a FALL is the market and is taken on the first reading, exactly as the quote lane has always done.
       // Holding a fall back until a "clean" second print was the whole gap: consecutive prints of a dying coin are 25%
       // and 30% apart, the guard demanded two within 10%, so the position sat on the stale price while the coin
       // collapsed and then booked the first print that happened to look tidy - 28 points under the level it fired at.
       // The second look is kept for what it was written for: a spike UP, and a fall away from an entry that was itself
-      // somebody else's number (a board row, the $sol case).
+      // somebody else's number (a market-board price rather than the pool's own).
       const falling = p.mc > 0 && next < p.mc;
       const trustedEntry = seeded || p.pxEntry === 'curve';
       if (p.mc > 0 && !(falling && trustedEntry) && Math.abs(next / p.mc - 1) > bar) {
@@ -1440,7 +1440,7 @@ class Engine extends EventEmitter {
   _markMarket(t, dexId) {
     if (!t || !dexId) return;
     if (dexId === 'pumpswap' || dexId === 'pump-amm') { t.graduated = true; return; }
-    // RULE CHANGED 2026-11-05 (1.0.2, measured on the owner's `$VC`: "peaked +3102.1%" on a four minute hold): a coin
+    // RULE CHANGED 2026-11-05 (1.0.2: a four minute hold showed a peak read from a graduated curve, not from a market): a coin
     // that has traded on PumpSwap KEEPS its own market. Its old pump.fun pair stays listed for ever, frozen at the
     // graduation figure, and a row from it is not evidence that the coin came back to the curve - treating it as such let
     // a fossil set the market cap (and un-graduate a coin that then got bought as a launch).
@@ -1467,7 +1467,7 @@ class Engine extends EventEmitter {
     if (row.symbol && row.symbol !== '?') t.symbol = row.symbol;
     if (row.name) t.name = row.name;
     if (row.pairCreatedAt > 0) t.launchedAt = row.pairCreatedAt;
-    // RULE CHANGED 2026-11-05 (1.0.2, measured on the owner's own `$VC`: "peaked +3102.1%" on a coin held four minutes,
+    // RULE CHANGED 2026-11-05 (1.0.2: a coin held four minutes showed a peak of +3102% that was a graduated curve, not a market,
     // while the take profit booked +77.6%): the exchange filter is not enough on its own. A GRADUATED coin keeps its old
     // pump.fun pair listed, frozen at the graduation figure, and a `pumpfun` row is not "foreign" - so it was allowed to
     // set the market cap of a coin that trades on PumpSwap and produce a thirty-one-fold "peak" out of a fossil. The
@@ -1489,7 +1489,7 @@ class Engine extends EventEmitter {
       if (this.positions.has(mint)) continue;
       const age = (now - t.createdAt) / 1000;
       const idle = (now - t.lastActivity) / 1000;
-      // RULE CHANGED 2026-11-05 (1.0.3, the owner: "coins tracked ubywa, raz 250 potem 190"): the working set was trimmed
+      // RULE CHANGED 2026-11-05 (1.0.3: the tracked-coin figure fell as the working set was pruned): the working set was trimmed
       // after two minutes of quiet, and the sweep then adopted the same coins again - a sawtooth the eye reads as a bug.
       // A quiet coin is now kept for four minutes (six when the map is full), which is still shorter than any coin's useful
       // life on this market and stops the churn.
@@ -1651,7 +1651,7 @@ class Engine extends EventEmitter {
   _scan(now) {
     const all = [...this.tokens.values()];
     if (!all.length) return;
-    // RULE ADDED 2026-11-05 (1.0.4, the owner: "czemu od razu 10 monet nie kupuje jak dałem 10 slotów?"): when the book
+    // RULE ADDED 2026-11-05 (1.0.4: a half-empty book looked like a stalled bot): when the book
     // is not full, the diary says WHAT is holding it back, once a minute, as counts of the reasons the last evaluation
     // left on each coin. Free slots are almost never a speed problem - they are the entry bar doing its job, and that is
     // impossible to see from a screen that only shows the coins which passed.
@@ -1757,7 +1757,7 @@ class Engine extends EventEmitter {
   async _entryPrice(t) {
     const board = Number(t.mc) || 0;
     let pool = 0;
-    // RULE ADDED 2026-11-05 (1.0.4, the owner: "bot po wystartowaniu nic nie kupuje ... powinien zapierdalać x10 szybciej"):
+    // RULE ADDED 2026-11-05 (1.0.4: a slow entry is a missed entry):
     // a coin whose own tape printed in the last 1.2 s already carries the POOL's price in `t.mc` - the stream decode writes
     // it straight from the curve (see the trade handler) - so waiting 450-700 ms for a second RPC reading of the same
     // number only lets the price run away before the order goes out. The read still happens whenever the tape is quiet,
@@ -1770,7 +1770,7 @@ class Engine extends EventEmitter {
     }
     try {
       if (!this.offline) {
-        // RULE CHANGED 2026-11-05 (1.0.2, the owner: "bot też czasami za wolno kupuje"): a coin whose own tape is fresh
+        // RULE CHANGED 2026-11-05 (1.0.2: entries were sometimes minutes behind the tape): a coin whose own tape is fresh
         // already has a price in hand, so the curve read is only confirmation and gets a shorter budget - 450 ms instead
         // of 700. On a coin with no recent trade the full wait stays, because then the pool IS the only number.
         const curves = await readCurves((fn, opts) => this.rpcCall(fn, { attempts: 1, budgetMs: this._entryBudget(t), ...opts }), [t.mint]);
@@ -2301,7 +2301,7 @@ class Engine extends EventEmitter {
     return `Out of SOL for the network fee: the wallet holds ${this._balance().toFixed(6)} SOL, under the 0.00089 SOL the network keeps for rent, so nothing can be sent. Send SOL to ${addr} and the coins sell by themselves.`;
   }
 
-  /** One plain sentence per minute about the one thing only the owner can fix. */
+  /** One plain sentence per minute about the one thing only the operator can fix. */
   _warnNoFeeSol() {
     const now = Date.now();
     if (this._noFeeWarned && now - this._noFeeWarned < 60000) return;
@@ -2486,7 +2486,7 @@ class Engine extends EventEmitter {
       : '';
     const atNote = slipNote ? ` (${why} at ${p.firedAt >= 0 ? '+' : ''}${p.firedAt.toFixed(1)}%${slipNote})` : ` (${why} at ${firedAt >= 0 ? '+' : ''}${firedAt.toFixed(1)}%)`;
     // The mint travels with the symbol: three coins called "titcoin" in one paper session were three different mints,
-    // and a line that names only the symbol cannot be read afterwards - not by the owner and not by me.
+    // and a line that names only the symbol cannot be read afterwards - not by the trader and not by whoever reads the log the next morning.
     const tag = `${p.symbol} (${p.mint.slice(0, 4)})`;
     const basis = p.paper ? '' : measured ? ' (paid by the chain)' : ' (estimated)';
     const mcNote = p.entryMc > 0 && p.mc > 0 && Math.abs(firedAt) > (Number(this.s.stopLossPct) || 0)

@@ -178,7 +178,7 @@ const LAUNCH_VSOL = 30000000000n;
     e.offline = false;
     assert.match(String(p.refuse), /No fresh price/, 'a row nobody refreshed in a minute is not a price');
 
-    // RULE ADDED 2026-11-05 (1.0.4, the owner: "bot powinien zapierdalać x10 szybciej ze wszystkim"): a coin whose own tape
+    // RULE ADDED 2026-11-05 (1.0.4: the scan and the tick were too slow for a sniper): a coin whose own tape
     // printed within the last 1.2 s already carries the POOL's price (`t.mc` is written straight from the curve by the trade
     // handler), so the entry does not wait 300-500 ms for an RPC read of the same number. Proven by making the read throw:
     // a fresh coin is still priced, a quiet one is not.

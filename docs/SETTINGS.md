@@ -32,7 +32,7 @@ App data folders:
 | Setting | What it does | Where to get it |
 | --- | --- | --- |
 | `rpcUrl` | Your own Solana RPC, tried before the public nodes. A paid node (Helius, Triton, FluxRPC, QuickNode) is the single biggest speed-up for a live desk: the feed, the entry price read and every transaction go through it | your provider's dashboard |
-| `rpcBackupUrl` | A second private node, tried right after the first and still ahead of the public pool. Measured with the owner's own keys: FluxRPC timed out once during a session and the desk moved to Helius without losing a trade | your provider's dashboard |
+| `rpcBackupUrl` | A second private node, tried right after the first and still ahead of the public pool. Measured with two private nodes: FluxRPC timed out once during a session and the desk moved to Helius without losing a trade | your provider's dashboard |
 | `rpcWsUrl` | The trade stream's own socket, used verbatim. A provider's WebSocket is often on a **different host** than its HTTP endpoint (FluxRPC: `wss://ws.eu.fluxrpc.com` against `https://eu.fluxrpc.com`), and a URL guessed by swapping the scheme simply never connects. Empty means derive it from the RPC URL | your provider's dashboard |
 | `pumpdevKey` | The live trade stream (launches and per-coin trades). 50,000 messages a month on the free plan, launches are not counted. The free plan also caps **25 live subscriptions per address**, which the desk respects by watching twelve | pumpdev.io |
 | `jupiterKey` | Sent as `x-api-key` on every Jupiter call: the backup swap route, the price service and the token lists | portal.jup.ag |
@@ -104,7 +104,7 @@ ahead, not 12% before it paid for itself. See [Why the percentages are net](#why
 | One wallet may buy (%) | 45 | 40 | 45 |
 | Fee gate (% of ticket) | 20 | 8 | 8 |
 
-**Balanced is the owner's own plan** (`PCS1~eyJ2IjoxLCJwIjoiYmFsYW5jZWQi…`), and it is built around one idea:
+**Balanced is the shipped plan** (`PCS1~…`) , and it is built around one idea:
 **wait for a crowd, then give it room.** Fifty distinct wallets and 2 SOL of net buying inside a 60-15000 SOL band
 is a high bar, so the coin that passes it is given a wide stop (45%), a distant target (80%) and 500 seconds. The
 five minute band is off - the crowd test replaces it - and the score is computed and shown but does not gate

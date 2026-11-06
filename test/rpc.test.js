@@ -77,7 +77,7 @@ const { RPCManager, DEFAULT_ENDPOINTS, classify } = require('../src/rpc');
   assert.strictEqual(m4.endpoints.length, DEFAULT_ENDPOINTS.length);
 
   // RULE ADDED 2026-11-05: a desk may hold TWO private nodes, tried in the order the operator typed them, and the
-  // public pool stays behind them. Measured on the owner's own keys: a primary and a backup, both `https://`.
+  // public pool stays behind them. Measured on live keys: a primary and a backup, both `https://`.
   const m4b = new RPCManager({ custom: ['https://a.example/rpc', 'https://b.example/rpc'], factory: (u) => ({ u }) });
   assert.strictEqual(m4b.current, 'https://a.example/rpc', 'the first node is the one that is used');
   assert.strictEqual(m4b.endpoints[1], 'https://b.example/rpc', 'the second is right behind it');

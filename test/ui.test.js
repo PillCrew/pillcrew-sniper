@@ -22,7 +22,7 @@ app.whenReady().then(async () => {
     'settings:get': () => settings,
     'wallet:status': () => ({ exists: false, unlocked: false, address: null }),
     'settings:share': () => ({ code: Share.encode(settings), text: Share.describe(settings) }),
-    // RULE ADDED 2026-11-05 (1.0.4): the owner's "BEST PROFIT setting ma tylko ustawienia ustawiać a nie startować bota".
+    // RULE ADDED 2026-11-05 (1.0.4): a settings button must never start trading.
     // The button must write settings and nothing else, so both channels are recorded and checked below.
     'settings:autopilot': (...args) => { calls.autopilotArgs = args; return settings; },
     'bot:start': () => { calls.botStart += 1; return { ok: true }; },

@@ -116,7 +116,7 @@
     $('#connText').textContent = s.connected ? (label || 'Live feed') : s.running ? 'Connecting…' : 'Offline';
     const cov = s.coverage || {};
     const perMin = s.stats && s.stats.launchesPerMin ? `${s.stats.launchesPerMin}/min` : '0/min';
-    // RULE CHANGED 2026-11-05 (1.0.3, the owner: "Coins tracked 195 też ubywa, raz jest 250 potem spada do 190"): the card
+    // RULE CHANGED 2026-11-05 (1.0.3: the tracked-coin figure fell as the working set was pruned): the card
     // above shows the coins SEEN this session (it only grows); the working map - trimmed as coins go quiet, refilled as new
     // ones appear - is named here, so a number that moves down is a number that says what it is.
     $('#sFeed').textContent = s.running
@@ -149,7 +149,7 @@
 
     $('#sBalance').textContent = sol(s.balance);
     // Real money: the honest figure is the wallet, not the sum of trades. It carries every fee and every rejected
-    // order, which is exactly what the owner noticed was missing.
+    // order, which is exactly what was missing.
     const liveMode = s.mode === 'live';
     const hasDelta = liveMode && s.walletDeltaSol != null;
     const shown = hasDelta ? s.walletDeltaSol : s.stats.pnl;
@@ -160,7 +160,7 @@
       const fails = Number(s.stats.orderFails || 0);
       const epx = s.stats.entryPx || {};
       const closed = Number(s.stats.wins || 0) + Number(s.stats.losses || 0);
-      // RULE CHANGED 2026-11-05 (1.0.4, the owner: "REALISE P/L ma jakiś błąd, refuse i nalicza itp"): the card printed the
+      // RULE CHANGED 2026-11-05 (1.0.4: the Profit/Loss line read like a list of errors): the card printed the
       // desk's own bookkeeping - "entries priced at the pool 0, at the board 0, refused 33" - and read as a list of errors
       // counted against his money. Where a price came from is a diagnostic, so it moves to the tooltip; the line under the
       // number now says only what a trader reads: whose money, how many trades, what the fees were, and whether the chain
@@ -174,7 +174,7 @@
     $('#sWin').textContent = closed ? Math.round((s.stats.wins / closed) * 100) + '%' : '–';
     $('#sWinSub').textContent = closed ? `${s.stats.wins} wins · ${s.stats.losses} losses` : 'no trades yet';
     $('#sBpm').textContent = s.stats.buysPerMin;
-    // RULE CHANGED 2026-11-05 (1.0.3, the owner: "Coins tracked 195 też ubywa, raz jest 250 potem spada do 190"): the card
+    // RULE CHANGED 2026-11-05 (1.0.3: the tracked-coin figure fell as the working set was pruned): the card
     // showed the WORKING map, which the pruner trims and the sweep refills - correct behaviour that reads as a bug. The big
     // number is now the coins the desk has taken in this session (it only grows), and the working set is named under it.
     $('#sSeen').textContent = s.stats.seen || 0;
@@ -255,7 +255,7 @@
       if (cell.className !== cls) { cell.className = cls; if (b) b.className = cls; }
       if (note) {
         // A price nobody has refreshed is labelled as such, in words: a still percentage on a moving coin is the one
-        // thing that made the owner sell a coin by hand while the card insisted it was up 71%.
+        // thing that made a trader sell a coin by hand while the card insisted it was up 71%.
         const stale = Number(p.pxAgeSec) >= 6 ? ` · no price ${fmtAge(p.pxAgeSec)}` : '';
         const line = `${sol(p.solIn, 3)} SOL · ${fmtAge(p.heldSec)}${p.paper ? ' · practice' : ''}${p.pending ? ' · confirming…' : ''}${p.closing ? ' · selling…' : ''}${stale}`;
         if (note.textContent !== line) note.textContent = line;
@@ -945,7 +945,7 @@
     }
   });
   // RULE CHANGED 2026-11-05 (1.0.4): the press applies the preset and stops there. Practice mode no longer starts a run
-  // from a settings button (the owner: "ma tylko ustawienia ustawiać a nie startować bota"), and the message says so.
+  // from a settings button, and the message says so.
   $('#autopilotBtn').addEventListener('click', async () => {
     try {
       const btn = $('#autopilotBtn');

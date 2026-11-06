@@ -570,7 +570,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
     e5._applyMarket('LAUNCH1', { mint: 'LAUNCH1', symbol: 'L1', priceNative: 0.0000002, priceUsd: 0.00002, mcapUsd: 180, dexId: 'pumpfun', quoteMint: WSOL, buys: 30, sells: 5 });
     assert.strictEqual(e5.tokens.get('LAUNCH1').graduated, false, 'a coin only seen on the curve stays a launch');
 
-    // RULE ADDED 2026-11-05 (1.0.2, measured on the owner's `$VC`: "peaked +3102.1%" while the take profit booked +77.6%):
+    // RULE ADDED 2026-11-05 (1.0.2: a graduated coin's frozen curve was read as a live price, so the take profit fired on a number nobody could trade at):
     // a graduated coin keeps its old pump.fun pair listed, frozen at the graduation figure. That row is not "foreign", so
     // it used to be allowed to set the market cap - a thirty-one-fold peak out of a fossil. The same `_ownPool` rule that
     // guards the position price now guards the market cap.
@@ -612,7 +612,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
     assert.strictEqual(e4._holderMisses, 0, 'and the outage counter is cleared');
   }
 
-  // RULE ADDED 2026-11-05 (1.0.4, the owner: "czemu od razu 10 monet nie kupuje jak dałem 10 slotów?"): a free slot is
+  // RULE ADDED 2026-11-05 (1.0.4: a half-empty book looked like a stalled bot): a free slot is
   // an entry-bar decision, and the diary must name it instead of leaving the screen looking asleep. One line a minute,
   // counts by reason, the coin's own numbers folded into a placeholder so the tally groups.
   e.tokens.set('m1', { mint: 'm1', status: 'new', reason: 'Needs 50 buyers in 5m' });

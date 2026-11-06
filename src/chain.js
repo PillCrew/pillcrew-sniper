@@ -99,7 +99,7 @@ class ChainFeed extends EventEmitter {
   constructor(opts = {}) {
     super();
     this.customRpc = opts.customRpc || '';
-    // RULE ADDED 2026-11-06 (1.0.8, the owner: "ich boty mają Geyser i ShredStream, więc będą szybsze"): the same feed can
+    // RULE ADDED 2026-11-06 (1.0.8: a Geyser-class stream is the faster door): the same feed can
     // now speak a provider's Geyser-class stream over WebSocket (`transactionSubscribe`) instead of `logsSubscribe`. The
     // DECODER is the same one, unchanged - a Geyser notification carries `meta.logMessages`, so every event still comes
     // from the program's own data, and only the transport (and therefore the latency) is better.

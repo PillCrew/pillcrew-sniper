@@ -263,7 +263,7 @@ app.whenReady().then(() => {
     if (!Object.prototype.hasOwnProperty.call(PROFILES, name)) throw new Error('Unknown profile');
     return store.set({ profile: name, ...PROFILES[name] });
   }));
-  // RULE CHANGED 2026-11-05 (1.0.4, the owner: "BEST PROFIT setting ma tylko ustawienia ustawiać a nie startować bota"):
+  // RULE CHANGED 2026-11-05 (1.0.4: a settings button must never start trading):
   // this handler wrote the preset and then pressed Start itself, so one press in Practice mode began trading. A settings
   // button that starts a bot is a trap - the same press in Real Money would have moved real money - so the start is gone
   // and the argument is ignored on purpose.
